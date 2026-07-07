@@ -31,13 +31,13 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/house";
 	//std::string sceneName = "../Scenes/living-room";
 	//std::string sceneName = "../Scenes/materialball";
-	//std::string sceneName = "../Scenes/MaterialsScene";
+	std::string sceneName = "../Scenes/MaterialsScene";
 	//std::string sceneName = "../Scenes/Sibenik";
-	std::string sceneName = "../Scenes/teapot-full";
+	//std::string sceneName = "../Scenes/teapot-full";
 	//std::string sceneName = "../Scenes/Terrain";
 
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 1;
+	unsigned int SPP = 128;
 
 	if (argc > 1) {
 		std::unordered_map<std::string, std::string> args;

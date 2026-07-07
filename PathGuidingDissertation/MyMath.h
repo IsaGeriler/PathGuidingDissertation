@@ -95,6 +95,12 @@ public:
 
 	// Operator Overloading - Negation
 	Vec4 operator-() const { return Vec4(-x, -y, -z); }
+
+	// Operator Overloading - Indexing
+	float& operator[](int index) {
+		assert((index >= 0 && index < 4) && "Invalid index passed, out of bounds!");
+		return coords[index];
+	}
 	
 	// Methods
 	Vec4 cross(Vec4 v) const {

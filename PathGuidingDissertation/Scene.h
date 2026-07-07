@@ -85,8 +85,8 @@ public:
 		// Add BVH building code here
 		// BVH Build
 		// if (bvh != nullptr) delete bvh;
-		// bvh = new BVHNode();
-		// bvh->build(triangles);
+		bvh = new BVHNode();
+		bvh->build(triangles);
 
 		// Do not touch the code below this line!
 		// Build light list
@@ -101,22 +101,7 @@ public:
 	}
 
 	IntersectionData traverse(const Ray& ray) {
-		IntersectionData intersection;
-		intersection.t = FLT_MAX;
-		for (int i = 0; i < triangles.size(); i++) {
-			float t, u, v;
-			if (triangles[i].rayIntersect(ray, t, u, v)) {
-				if (t < intersection.t) {
-					intersection.t = t;
-					intersection.ID = i;
-					intersection.alpha = u;
-					intersection.beta = v;
-					intersection.gamma = 1.0f - (u + v);
-				}
-			}
-		}
-		return intersection;
-		//return bvh->traverse(ray, triangles);
+		return bvh->traverse(ray, triangles);
 	}
 
 	// Uniform Light Sampling

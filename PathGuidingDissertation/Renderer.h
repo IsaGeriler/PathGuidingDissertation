@@ -107,12 +107,11 @@ public:
 			// Sample from light, returns direction instead of point
 			float pdfLight = 0.f;
 			Colour emittedColour;
-			Vec4 wi = light->sample(shadingData, sampler, emittedColour, pdfLight);
+			Vec4 directionToLight = light->sample(shadingData, sampler, emittedColour, pdfLight);
 			if (pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
-
-			// Evaluate Geometry Term for environment maps
-			// It's just cosTheta because there is no next surface
-			float cosTheta = std::max(Dot(wi, shadingData.sNormal), 0.f);
+			
+			// Normalize direction to light
+			Vec4 wi = directionToLight.normalize();
 
 			// Evaluate visibility to outside scene bounds
 			// FIX: Scene Bounds Fix, most noticable in Sibenik Scene
@@ -121,6 +120,12 @@ public:
 			Vec4 shadowRayOffset(shadingData.x + (shadingData.gNormal * EPSILON * sign));
 			Vec4 sceneBoundOffset = use<SceneBounds>().sceneCentre + (wi * use<SceneBounds>().sceneRadius);
 			if (scene->visible(shadowRayOffset, sceneBoundOffset)) {
+				// Evaluate Geometry Term for environment maps
+				// It's just cosTheta because there is no next surface
+				// Absolute value just in case we have inverted normals (e.g. Teapot)
+				float cosTheta = fabs(Dot(wi, shadingData.sNormal));
+				if (cosTheta <= 0.f) return Colour(0.f, 0.f, 0.f);
+
 				// Evaluate BSDF and multiply terms and return
 				Colour bsdf = shadingData.bsdf->evaluate(shadingData, wi);
 
@@ -135,7 +140,7 @@ public:
 				// Multiply terms, divide by pALight, and return
 				return (emittedColour * bsdf * cosTheta * wd) / pALight;
 			}
-			return Colour(1.f, 1.f, 0.f);
+			return Colour(0.f, 0.f, 0.f);
 		}
 	}
 
