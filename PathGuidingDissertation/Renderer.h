@@ -79,7 +79,7 @@ public:
 
 			// Calculate visibility
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
-			Vec4 shadowRayOffset(shadingData.x + (shadingData.gNormal * EPSILON * sign));
+			Vec4 shadowRayOffset(shadingData.x + shadingData.gNormal * (EPSILON * sign));
 			if (scene->visible(shadowRayOffset, pointOnLight)) {
 				// Calculate Geometry Term
 				float denominator = surfaceToLight.lengthSquare();
@@ -109,21 +109,20 @@ public:
 			Colour emittedColour;
 			Vec4 directionToLight = light->sample(shadingData, sampler, emittedColour, pdfLight);
 			if (pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
-			
+
 			// Normalize direction to light
 			Vec4 wi = directionToLight.normalize();
 
 			// Evaluate visibility to outside scene bounds
 			// FIX: Scene Bounds Fix, most noticable in Sibenik Scene
 			// Replaces calculated SceneBounds AABB length with SceneBounds sceneRadius and sceneCentre
-			float sign = (Dot(wi, shadingData.gNormal) > 0.f) ? 1.f : -1.f;
-			Vec4 shadowRayOffset(shadingData.x + (shadingData.gNormal * EPSILON * sign));
+			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
+			Vec4 shadowRayOffset(shadingData.x + shadingData.gNormal * (EPSILON * sign));
 			Vec4 sceneBoundOffset = use<SceneBounds>().sceneCentre + (wi * use<SceneBounds>().sceneRadius);
 			if (scene->visible(shadowRayOffset, sceneBoundOffset)) {
 				// Evaluate Geometry Term for environment maps
 				// It's just cosTheta because there is no next surface
-				// Absolute value just in case we have inverted normals (e.g. Teapot)
-				float cosTheta = fabs(Dot(wi, shadingData.sNormal));
+				float cosTheta = std::max(Dot(wi, shadingData.sNormal), 0.f);
 				if (cosTheta <= 0.f) return Colour(0.f, 0.f, 0.f);
 
 				// Evaluate BSDF and multiply terms and return
@@ -186,29 +185,30 @@ public:
 			float pdfBsdf = 0.f;
 			Colour indirect;
 			Vec4 wi = shadingData.bsdf->sample(shadingData, sampler, indirect, pdfBsdf);
-			if (pdfBsdf < EPSILON) return direct;
-			float sign = Dot(wi, shadingData.gNormal) >= 0.f ? 1.f : -1.f;
-			Ray indirectRay(shadingData.x + (shadingData.gNormal * EPSILON * sign), wi);
+			if (pdfBsdf <= 0.f) return direct;
+			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
+			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
 
 			// Update throughput
+			// Taking absolute value of cosTheta to fix GlassBSDF rendering
 			float cosTheta = fabs(Dot(wi, shadingData.sNormal));
 			if (cosTheta <= 0.f) return direct;
 			pathThroughput = (pathThroughput * indirect * cosTheta) / pdfBsdf;
 
 			// Check for NaN/Inf values
-			if (std::isnan(pathThroughput.r) || std::isnan(pathThroughput.g) || std::isnan(pathThroughput.b) ||
-				std::isinf(pathThroughput.r) || std::isinf(pathThroughput.g) || std::isinf(pathThroughput.b)) {
-				return direct;
-			}
+			if (std::isnan(pathThroughput.r) || std::isnan(pathThroughput.g) || std::isnan(pathThroughput.b)) return direct;
+			if (std::isinf(pathThroughput.r) || std::isinf(pathThroughput.g) || std::isinf(pathThroughput.b)) return direct;
+			if (pathThroughput.r < 0.f || pathThroughput.g < 0.f || pathThroughput.b < 0.f) return direct;
 
-			// Apply Russian Roulette Starting at L = 4
+			// Apply Russian Roulette Starting at the ray depth 4
+			// Russian Roulette should kick in normally between at depth 3 to 5
 			if (depth > 3) {
 				float rrp = std::min(std::max(EPSILON, pathThroughput.Lum()), 1.f);
 				if (sampler->next() < rrp) pathThroughput = pathThroughput / rrp;
 				else return direct;
 			}
 
-			// Terminate when L = 25
+			// Terminate when the ray depth exceeds 25 bounces, to avoid infinite recursion
 			if (depth > 24) return direct;
 			
 			// Recurse until path terminated
@@ -216,11 +216,14 @@ public:
 			return direct + pathTraceRecursive(indirectRay, pathThroughput, depth + 1, sampler, pdfBsdf, isPreviousSurfaceSpecular);
 		}
 		if (depth == 0 || previousSurfaceSpecular) return pathThroughput * scene->background->evaluate(r.dir);
-		if (scene->background->evaluate(r.dir).Lum() < EPSILON) return Colour(0.f, 0.f, 0.f);
+		if (scene->background->evaluate(r.dir).Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
 		// Evaluate MIS for Environment Map
 		// Infinite Light PDF and PMF
 		float pmfLight = 1.f / scene->lights.size();
 		float pdfLight = scene->background->PDF(shadingData, r.dir);
+
+		// Handle degenerate PMF / PDF cases
+		if (pmfLight <= 0.f || pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
 
 		// Calculate pA of Light and BSDF for MIS
 		float pALight = pmfLight * pdfLight;

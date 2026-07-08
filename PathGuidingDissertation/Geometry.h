@@ -94,7 +94,6 @@ public:
 	}
 
 	Vec4 centre() const {
-		// return (vertices[0].p + vertices[1].p + vertices[2].p) / 3.f;
 		return (vertices[0].p + vertices[1].p + vertices[2].p) * 0.3333f;
 	}
 
