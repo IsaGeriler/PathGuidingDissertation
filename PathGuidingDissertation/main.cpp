@@ -11,7 +11,7 @@
 int main(int argc, char* argv[]) {
 	// -- Area Light Test Scenes --
 	//std::string sceneName = "../Scenes/bathroom";
-	//std::string sceneName = "../Scenes/bathroom2";
+	std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
 	//std::string sceneName = "../Scenes/coffee";
 	//std::string sceneName = "../Scenes/cornell-box";
@@ -31,7 +31,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/house";
 	//std::string sceneName = "../Scenes/living-room";
 	//std::string sceneName = "../Scenes/materialball";
-	std::string sceneName = "../Scenes/MaterialsScene";
+	//std::string sceneName = "../Scenes/MaterialsScene";
 	//std::string sceneName = "../Scenes/Sibenik";
 	//std::string sceneName = "../Scenes/teapot-full";
 	//std::string sceneName = "../Scenes/Terrain";
