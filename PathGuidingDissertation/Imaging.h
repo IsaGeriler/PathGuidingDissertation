@@ -146,7 +146,7 @@ public:
 
 class BoxFilter : public ImageFilter {
 public:
-	float filter(float x, float y) const { return (fabs(x) < 0.5f && fabs(y) < 0.5f) ? 1.f : 0.f; }
+	float filter(float x, float y) const { return (fabsf(x) < 0.5f && fabsf(y) < 0.5f) ? 1.f : 0.f; }
 	int size() const { return 1; }
 };
 
@@ -216,12 +216,11 @@ public:
 		}
 	}
 
-
 	// Return a tonemapped pixel at coordinates x, y
 	void tonemap(int x, int y, unsigned char& r, unsigned char& g, unsigned char& b, float exposure = 1.f, float LmaxWhite = 10.f) {
 		// Get input colour and apply exposure
-		Colour col = (SPP > 0) ? film[(y * width) + x] / static_cast<float>(SPP) : film[(y * width) + x];
-		col = col * exposure;
+		float invSPP = (SPP > 0) ? 1.f / static_cast<float>(SPP) : 1.f;
+		Colour col = film[(y * width) + x] * invSPP * exposure;
 
 		// Get Input Luminance
 		float Lin = col.Lum();

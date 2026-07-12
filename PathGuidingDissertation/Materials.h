@@ -162,7 +162,7 @@ public:
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
 		// Convert wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
-		if (wiLocal.z == 0.f) return Colour(0.f, 0.f, 0.f);
+		if (wiLocal.z <= 0.f) return Colour(0.f, 0.f, 0.f);
 		return albedo->sample(shadingData.tu, shadingData.tv) * 0.318309886183790671538;
 	}
 
@@ -195,26 +195,16 @@ public:
 		Vec4 wrLocal(-woLocal.x, -woLocal.y, woLocal.z);
 
 		// Guard case to prevent division by zero
-		if (wrLocal.z <= EPSILON) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+		if (fabsf(wrLocal.z) <= EPSILON) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 		
 		// Convert back to world space and return
-		Vec4 wi = shadingData.frame.toWorld(wrLocal);
-		reflectedColour = evaluate(shadingData, wi);  // BSDF = albedo / Dot(wr, n) [Use Dirac Delta Distribution]
-		pdf = 1.f;									  // PDF = 1 (for perfect specular reflection)
-		return wi;
+		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / wrLocal.z;  // BSDF = albedo / Dot(wr, n)
+		pdf = 1.f;																	   // PDF = 1 (for perfect specular reflection)
+		return shadingData.frame.toWorld(wrLocal);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
-		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-		Vec4 wiLocal = shadingData.frame.toLocal(wi);
-		Vec4 wrLocal(-woLocal.x, -woLocal.y, woLocal.z);
-
-		// Dirac Delta
-		if ((wiLocal - wrLocal).lengthSquare() > EPSILON) return Colour(0.f, 0.f, 0.f);
-
-		// Check cosine term and return colour
-		if (wrLocal.z <= EPSILON) return Colour(0.f, 0.f, 0.f);
-		return albedo->sample(shadingData.tu, shadingData.tv) / wrLocal.z;
+		return Colour(0.f, 0.f, 0.f);
 	}
 
 	float PDF(const ShadingData& shadingData, const Vec4& wi) {
@@ -289,7 +279,7 @@ public:
 		
 		// Half Vector
 		Vec4 wmLocal = wiLocal + woLocal;
-		if (wmLocal.length() < EPSILON) return Colour(0.f, 0.f, 0.f);
+		if (wmLocal.lengthSquare() < EPSILON) return Colour(0.f, 0.f, 0.f);
 		wmLocal = wmLocal.normalize();
 		if (Dot(woLocal, wmLocal) <= 0.f) return Colour(0.f, 0.f, 0.f);
 		if (wiLocal.z * woLocal.z <= 0.f) return Colour(0.f, 0.f, 0.f);
@@ -314,7 +304,7 @@ public:
 
 		// Half Vector
 		Vec4 wmLocal = wiLocal + woLocal;
-		if (wmLocal.length() < EPSILON) return 0.f;
+		if (wmLocal.lengthSquare() < EPSILON) return 0.f;
 		wmLocal = wmLocal.normalize();
 		if (Dot(woLocal, wmLocal) <= 0.f) return 0.f;
 		if (wiLocal.z * woLocal.z <= 0.f) return 0.f;
@@ -348,7 +338,7 @@ public:
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		
 		// Cosine term guard case
-		if (woLocal.z == 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+		if (fabsf(woLocal.z) < EPSILON) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 
 		// Fresnel is the probability of the material reflecting
 		float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
@@ -521,7 +511,7 @@ public:
 		float etaProbability = 1.f;
 		if (!reflect) etaProbability = woLocal.z > 0.f ? eta : 1.f / eta;
 		Vec4 wmLocal = wiLocal * etaProbability + woLocal;
-		if (wmLocal.length() < EPSILON) return Colour(0.f, 0.f, 0.f);
+		if (wmLocal.lengthSquare() < EPSILON) return Colour(0.f, 0.f, 0.f);
 		wmLocal = wmLocal.normalize();
 
 		// Discard backfacing microfacets
@@ -569,7 +559,7 @@ public:
 		float etaProbability = 1.f;
 		if (!reflect) etaProbability = woLocal.z > 0.f ? eta : 1.f / eta;
 		Vec4 wmLocal = wiLocal * etaProbability + woLocal;
-		if (wmLocal.length() < EPSILON) return 0.f;
+		if (wmLocal.lengthSquare() < EPSILON) return 0.f;
 		wmLocal = wmLocal.normalize();
 
 		// Discard backfacing microfacets
@@ -695,11 +685,11 @@ public:
 	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
 		// Get outcoming direction
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-		if (woLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+		//if (woLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 
 		// Fresnel to compute diffuse or reflect surface
 		Vec4 wiLocal;
-		float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
+		float fresnel = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		if (sampler->next() < fresnel) {
 			// Glossy Part - Sample theta and phi from random variables for half vector
 			float e = alphaToPhongExponent();
@@ -711,11 +701,11 @@ public:
 
 			// Get half vector
 			Vec4 hLocal = SphericalCoordinates::sphericalToWorld(thetaH, phiH).normalize();
-			if (Dot(woLocal, hLocal) <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+			// if (Dot(woLocal, hLocal) <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 			
 			// Then reflect over half vector
 			wiLocal = hLocal * 2.f * Dot(woLocal, hLocal) - woLocal;
-			if (wiLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+			// if (wiLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 		} else {
 			// Diffuse Part - Sample wi with cosine hemisphere
 			wiLocal = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
@@ -737,19 +727,20 @@ public:
 
 		// Get half vector and lenght check for half veector
 		Vec4 hLocal = wiLocal + woLocal;
-		if (hLocal.length() < EPSILON) return Colour(0.f, 0.f, 0.f);
+		if (hLocal.lengthSquare() < EPSILON) return Colour(0.f, 0.f, 0.f);
 		hLocal = hLocal.normalize();
 
-		if (Dot(woLocal, hLocal) <= 0.f) return Colour(0.f, 0.f, 0.f);
+		// if (Dot(woLocal, hLocal) <= 0.f) return Colour(0.f, 0.f, 0.f);
 
 		// Calculate ks and kd
 		float e = alphaToPhongExponent();
-		float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
+		// float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
+		float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		float kd = 1.f - ks;
 		
 		// Blinn Normalization Factor
 		// https://renderwonk.com/publications/s2010-shading-course/gotanda/course_note_practical_implementation_at_triace.pdf
-		float norm = (e + 2.f) / (4.f * M_PI * (2.f - pow(2.f, (-e * 0.5f))));
+		float norm = (e + 2.f) / (4.f * M_PI * (2.f - std::powf(2.f, (-e * 0.5f))));
 		float normLowerBound = (e + 2.f) / (8.f * M_PI);
 		float normUpperBound = (e + 4.f) / (8.f * M_PI);
 
@@ -757,9 +748,9 @@ public:
 		norm = std::min(std::max(normLowerBound, norm), normUpperBound);
 
 		// BSDF = kd * DiffuseBSDF + ks * GlossyBSDF
-		float glossyComponent = std::pow(std::max(hLocal.z, 0.f), e);
+		float glossyComponent = std::powf(std::max(hLocal.z, 0.f), e);
 		Colour diffuseBSDF = albedo->sample(shadingData.tu, shadingData.tv) * M_1_PI;
-		Colour glossyBSDF = Colour(1.f, 1.f, 1.f) * glossyComponent;
+		Colour glossyBSDF = Dot(woLocal, hLocal) <= 0.f ? Colour(0.f, 0.f, 0.f) : Colour(1.f, 1.f, 1.f) * glossyComponent;
 		return (diffuseBSDF * kd) + (glossyBSDF * norm * ks);
 	}
 
@@ -773,18 +764,19 @@ public:
 		
 		// Get half vector and lenght check for half veector
 		Vec4 hLocal = wiLocal + woLocal;
-		if (hLocal.length() < EPSILON) return 0.f;
+		if (hLocal.lengthSquare() < EPSILON) return 0.f;
 		hLocal = hLocal.normalize();
 
 		// Calculate ks and kd
 		float e = alphaToPhongExponent();
-		float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
+		// float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
+		float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		float kd = 1.f - ks;
 
 		// PDF = kd * DiffusePDF + ks * GlossyPDF
-		if (Dot(woLocal, hLocal) <= 0.f) return 0.f;
-		float ph = ((e + 1.f) / (2.f * M_PI)) * std::pow(std::max(hLocal.z, 0.f), e);
-		float glossyPDF = (ph / (4.f * Dot(woLocal, hLocal)));
+		// if (Dot(woLocal, hLocal) <= 0.f) return 0.f;
+		float ph = ((e + 1.f) / (2.f * M_PI)) * std::powf(std::max(hLocal.z, 0.f), e);
+		float glossyPDF = Dot(woLocal, hLocal) <= 0.f ? 0.f : (ph / (4.f * Dot(woLocal, hLocal)));
 		float diffusePDF = SamplingDistributions::cosineHemispherePDF(wiLocal);
 		return (kd * diffusePDF) + (ks * glossyPDF);
 	}
