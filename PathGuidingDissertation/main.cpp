@@ -11,9 +11,9 @@
 int main(int argc, char* argv[]) {
 	// -- Area Light Test Scenes --
 	//std::string sceneName = "../Scenes/bathroom";
-	std::string sceneName = "../Scenes/bathroom2";
+	//std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
-	//std::string sceneName = "../Scenes/coffee";
+	std::string sceneName = "../Scenes/coffee";
 	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
 	//std::string sceneName = "../Scenes/kitchen";
@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/Terrain";
 
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 128;
+	unsigned int SPP = 256;
 
 	if (argc > 1) {
 		std::unordered_map<std::string, std::string> args;

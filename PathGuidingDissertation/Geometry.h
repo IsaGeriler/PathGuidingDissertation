@@ -1,7 +1,7 @@
 #pragma once
 
 #include <algorithm>
-#include <stack>
+#include <climits>
 #include <vector>
 #include <utility>
 
@@ -14,10 +14,10 @@
 #define MOLLER_TRUMBORE_EPSILON 1e-8f
 
 // Definitions for BVH Accelleration Structure
-#define MAXNODE_TRIANGLES 8
+#define MAXNODE_TRIANGLES 4
 #define BOUNDS_COST 1.f
-#define INTERSECT_COST 1.2f
-#define BUILD_BINS 32
+#define INTERSECT_COST 1.5f
+#define BUILD_BINS 16
 
 class Ray {
 public:
@@ -94,7 +94,7 @@ public:
 	}
 
 	Vec4 centre() const {
-		return (vertices[0].p + vertices[1].p + vertices[2].p) * 0.3333f;
+		return ((vertices[0].p + vertices[1].p + vertices[2].p) * 0.3333f);
 	}
 
 	// Möller-Trumbore Ray Triangle Intersection
@@ -115,23 +115,18 @@ public:
 		float invDet = 1.f / det;
 		Vec4 T = r.o - vertices[0].p;
 		
-		// Get Barycentric Beta
-		float beta = Dot(T, p) * invDet;
-		if (beta < 0.f || beta > 1.f) return false;
+		// Get Barycentric Beta (u)
+		u = Dot(T, p) * invDet;
+		if (u < 0.f || u > 1.f) return false;
 
-		// Calculate q, and Get Barycentric Gamma
+		// Calculate q, and Get Barycentric Gamma (v)
 		Vec4 q = Cross(T, _e0);
-		float gamma = Dot(r.dir, q) * invDet;
-		if (gamma < 0.f || gamma > 1.f || (beta + gamma > 1.f)) return false;
+		v = Dot(r.dir, q) * invDet;
+		if (v < 0.f || v > 1.f || (u + v > 1.f)) return false;
 
 		// Calculate t
 		t = Dot(_e1, q) * invDet;
-		if (t < 0.f) return false;
-
-		// Assign alpha and beta from computed beta and gamma
-		u = 1.f - beta - gamma;
-		v = beta;
-		return true;
+		return (t >= 0.f);
 	}
 
 	void interpolateAttributes(const float alpha, const float beta, const float gamma, Vec4& interpolatedNormal, float& interpolatedU, float& interpolatedV) const {
@@ -151,7 +146,7 @@ public:
 		float gamma = 1.f - alpha - beta;
 
 		pdf = 1.f / area;
-		return (vertices[0].p * alpha) + (vertices[1].p * beta) + (vertices[2].p * gamma);
+		return ((vertices[0].p * alpha) + (vertices[1].p * beta) + (vertices[2].p * gamma));
 	}
 
 	// Geometry Normal (different than Shading Normal)
@@ -239,18 +234,18 @@ public:
 // TO:DO - Store Each Path Vertex In Accelleration Structure (i.e. BVH)
 //		   This Includes Position, Incoming Direction (wi), and Incoming Radiance
 struct IntersectionData {
-	unsigned int ID;
-	float t;
-	float alpha;
-	float beta;
-	float gamma;
+	unsigned int ID = UINT_MAX;
+	float t = FLT_MAX;
+	float alpha = 0.f;
+	float beta = 0.f;
+	float gamma = 0.f;
 };
 
 struct BVHBuildNode {
 	AABB bounds;
 	// rightChild = leftChild + 1, so no need to store it
 	// leftFirst = 0 is root node, no need to reserve offset I guess...
-	int leftFirst, used;
+	int leftFirst = 0, used = 0;
 	bool isLeaf() const { return used > 0; }
 };
 
@@ -281,7 +276,8 @@ private:
 	}
 
 	float calculateCost(BVHBuildNode& node) {
-		return node.used * node.bounds.area();
+		// return node.used * node.bounds.area();
+		return node.used * INTERSECT_COST;
 	}
 
 	float findBestSplitPlane(BVHBuildNode& node, std::vector<Triangle>& triangles, int& axis, float& splitPosition) {
@@ -341,7 +337,6 @@ private:
 				if (bin[BUILD_BINS - 1 - i].triangleCount > 0) {
 					rightBounds.extend(bin[BUILD_BINS - 1 - i].bounds.min);
 					rightBounds.extend(bin[BUILD_BINS - 1 - i].bounds.max);
-					rightArea[BUILD_BINS - 2 - i] = rightBounds.area();
 				}
 				rightArea[BUILD_BINS - 2 - i] = (rightCountSum > 0) ? rightBounds.area() : 0.f;
 			}
@@ -412,7 +407,9 @@ private:
 	}
 public:
 	void build(std::vector<Triangle>& inputTriangles) {
-		// Add BVH building code here
+		// Early return if triangle list is empty
+		if (inputTriangles.empty()) return;
+
 		// Reset these in case of multiple builds
 		rootIndex = 0; nodesUsed = 1;
 
@@ -446,10 +443,13 @@ public:
 	}
 
 	void traverse(const Ray& ray, const std::vector<Triangle>& triangles, IntersectionData& intersection) {
-		// Add BVH Traversal code here
+		// Start from the root node
 		int currentIndex = rootIndex;
 		BVHBuildNode* node = &bvhBuildNode[currentIndex];
-		std::stack<int> nodeStackIndex;
+
+		// Stack array for storing BVHBuildNode indexes
+		int stack[64]{};
+		int stackPointer = 0;
 
 		float tBounds;
 		if (!node->bounds.rayAABB(ray, tBounds)) return;
@@ -465,14 +465,14 @@ public:
 						if (t > EPSILON && t < intersection.t) {
 							intersection.t = t;
 							intersection.ID = triangleIndex;
-							intersection.alpha = u;
-							intersection.beta = v;
-							intersection.gamma = 1.f - (u + v);
+							intersection.alpha = 1.f - (u + v);
+							intersection.beta = u;
+							intersection.gamma = v;
 						}
 					}
 				}
-				if (nodeStackIndex.empty()) break;
-				else { int index = nodeStackIndex.top(); node = &bvhBuildNode[index]; nodeStackIndex.pop(); }
+				if (stackPointer == 0) break;
+				else { currentIndex = stack[--stackPointer]; node = &bvhBuildNode[currentIndex]; }
 				continue;
 			}
 			// Node is either left or right child, traverse the least costing child
@@ -492,20 +492,23 @@ public:
 				std::swap(leftChildIndex, rightChildIndex);
 			}
 			if (distanceLeft == FLT_MAX) {
-				if (nodeStackIndex.empty()) break;
-				else { int index = nodeStackIndex.top(); node = &bvhBuildNode[index]; nodeStackIndex.pop(); }
+				if (stackPointer == 0) break;
+				else { currentIndex = stack[--stackPointer]; node = &bvhBuildNode[currentIndex]; }
 			} else {
 				node = leftChild;
-				if (distanceRight != FLT_MAX) nodeStackIndex.push(rightChildIndex);
+				if (distanceRight != FLT_MAX) stack[stackPointer++] = rightChildIndex;
 			}
 		}
 	}
 
 	bool traverseVisible(const Ray& ray, const std::vector<Triangle>& triangles, const float maxT) {
-		// Add visibility code here
+		// Start from the root node
 		int currentIndex = rootIndex;
 		BVHBuildNode* node = &bvhBuildNode[currentIndex];
-		std::stack<int> nodeStackIndex;
+
+		// Stack array for storing BVHBuildNode indexes
+		int stack[64]{};
+		int stackPointer = 0;
 
 		float tBounds;
 		if (!node->bounds.rayAABB(ray, tBounds)) return true;
@@ -521,8 +524,8 @@ public:
 						if (t > EPSILON && t < maxT) return false;
 					}
 				}
-				if (nodeStackIndex.empty()) break;
-				else { currentIndex = nodeStackIndex.top(); nodeStackIndex.pop(); node = &bvhBuildNode[currentIndex];  }
+				if (stackPointer == 0) break;
+				else { currentIndex = stack[--stackPointer]; node = &bvhBuildNode[currentIndex]; }
 				continue;
 			}
 			// Node is either left or right child, traverse the least costing child
@@ -542,12 +545,12 @@ public:
 				std::swap(leftChildIndex, rightChildIndex);
 			}
 			if (distanceLeft == FLT_MAX) {
-				if (nodeStackIndex.empty()) break;
-				else { currentIndex = nodeStackIndex.top(); nodeStackIndex.pop(); node = &bvhBuildNode[currentIndex]; }
+				if (stackPointer == 0) break;
+				else { currentIndex = stack[--stackPointer]; node = &bvhBuildNode[currentIndex]; }
 			}
 			else {
 				node = leftChild;
-				if (distanceRight != FLT_MAX) nodeStackIndex.push(rightChildIndex);
+				if (distanceRight != FLT_MAX) stack[stackPointer++] = rightChildIndex;
 			}
 		}
 		return true;
