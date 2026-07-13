@@ -166,13 +166,14 @@ public:
 				float pmfLight = 1.f / scene->lights.size();
 				float pdfLight = 1.f / scene->triangles[intersection.ID].area;
 
-				float cosThetaLight = std::max(Dot(r.dir, shadingData.sNormal), 0.f);
-				float distanceSquare = SQ(shadingData.t);
+				float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
+				if (cosThetaPrime <= 0.f) return Colour(0.f, 0.f, 0.f);
+				float distanceSquare = SQ(intersection.t);
 				if (distanceSquare < EPSILON) return Colour(0.f, 0.f, 0.f);
 
 				// Calculate pA of Light and BSDF for MIS
 				float pALight = pdfLight * pmfLight;
-				float pABsdf = previousBsdfPdf * cosThetaLight / distanceSquare;
+				float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
 
 				// Calculate Weight for MIS
 				float wind = weightPowerHeuristics(pABsdf, pALight);
@@ -180,6 +181,9 @@ public:
 			}
 			// Calculate Direct Lighting
 			Colour direct = pathThroughput * computeDirect(shadingData, sampler);
+
+			// Terminate when the ray depth exceeds 25 bounces, to avoid infinite recursion
+			if (depth > 24) return direct;
 			
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;
@@ -207,9 +211,6 @@ public:
 				if (sampler->next() < rrp) pathThroughput = pathThroughput / rrp;
 				else return direct;
 			}
-
-			// Terminate when the ray depth exceeds 25 bounces, to avoid infinite recursion
-			if (depth > 24) return direct;
 			
 			// Recurse until path terminated
 			bool isPreviousSurfaceSpecular = shadingData.bsdf->isPureSpecular();

@@ -734,8 +734,8 @@ public:
 
 		// Calculate ks and kd
 		float e = alphaToPhongExponent();
-		// float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
-		float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
+		float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
+		//float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		float kd = 1.f - ks;
 		
 		// Blinn Normalization Factor
@@ -769,8 +769,8 @@ public:
 
 		// Calculate ks and kd
 		float e = alphaToPhongExponent();
-		// float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
-		float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
+		float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
+		//float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		float kd = 1.f - ks;
 
 		// PDF = kd * DiffusePDF + ks * GlossyPDF

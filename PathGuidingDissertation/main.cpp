@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/Terrain";
 
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 128;
+	unsigned int SPP = 1024;
 
 	if (argc > 1) {
 		std::unordered_map<std::string, std::string> args;
