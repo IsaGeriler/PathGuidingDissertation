@@ -199,7 +199,10 @@ public:
 			if (cosTheta <= 0.f) return direct;
 			pathThroughput = (pathThroughput * indirect * cosTheta) / pdfBsdf;
 
-			// Check for NaN/Inf values
+			// Eliminate zero-luminance
+			if (pathThroughput.Lum() <= 0.f) return direct;
+
+			// Check for NaN/Inf or negative channel values
 			if (std::isnan(pathThroughput.r) || std::isnan(pathThroughput.g) || std::isnan(pathThroughput.b)) return direct;
 			if (std::isinf(pathThroughput.r) || std::isinf(pathThroughput.g) || std::isinf(pathThroughput.b)) return direct;
 			if (pathThroughput.r < 0.f || pathThroughput.g < 0.f || pathThroughput.b < 0.f) return direct;
