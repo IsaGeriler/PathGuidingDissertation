@@ -22,6 +22,25 @@ public:
 	float next() { return dist(generator); }
 };
 
+// PSS (Primary Sample Space) will be implemented as a sampler similar to MTRandom
+struct PrimarySample {
+private:
+	float valueBackup = 0.f;
+	int modifyBackup = 0, lastModifyIter = 0;
+public:
+	float value = 0.f;
+
+	void backup() {
+		valueBackup = value;
+		modifyBackup = lastModifyIter;
+	}
+
+	void restore() {
+		value = valueBackup;
+		lastModifyIter = modifyBackup;
+	}
+};
+
 // Note all of these distributions assume z-up coordinate system
 class SamplingDistributions {
 public:
