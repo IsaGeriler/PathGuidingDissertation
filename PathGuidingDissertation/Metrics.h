@@ -65,6 +65,6 @@ public:
 			sumSquaredError += diff * diff;
 		}
 		float rmse = std::sqrtf(sumSquaredError / (float)iterSize);
-		return rmse / sqrtf(y_bar);
+		return rmse / (sqrtf(y_bar) + 1e-2f);
 	}
 };
