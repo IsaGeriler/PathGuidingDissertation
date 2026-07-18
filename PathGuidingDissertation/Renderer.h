@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <iostream>
+#include <iterator>
 #include <thread>
 #include <vector>
 
@@ -75,22 +77,6 @@ public:
 	// Public Methods
 	void buildPointBVHNode(std::vector<PathVertex>& inputPathVertices) {
 		// Add PointBVHNode building code here
-	}
-
-	void traversePointBVHNode(const Ray& ray, const std::vector<PathVertex>& pathVertices, IntersectionData& intersection) {
-		// Add PointBVHNode Traversal code here
-	}
-
-	IntersectionData traversePointBVHNode(const Ray& ray, const std::vector<PathVertex>& pathVertices) {
-		IntersectionData intersection;
-		intersection.t = FLT_MAX;
-		traversePointBVHNode(ray, pathVertices, intersection);
-		return intersection;
-	}
-
-	bool traverseVisiblePointBVHNode(const Ray& ray, const std::vector<PathVertex>& pathVertices, const float maxT) {
-		// Add visibility code here
-		return true;
 	}
 };
 
@@ -508,10 +494,7 @@ public:
 		PointBVHNode cache;
 
 		// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
-		// Using thread_local to avoid crashing on tiled rendering due to accessing bad memory
-		thread_local std::vector<PathVertex> tilePathVertices;
-		thread_local std::vector<PathVertex> globalPathVertices;
-		globalPathVertices.clear();
+		std::vector<std::vector<PathVertex>> perThreadPathVertexRecords(numProcs);
 
 		// Get total tile count
 		unsigned int tile_size = 32;
@@ -526,6 +509,7 @@ public:
 				[&, i]() {
 					// Lambda function to render tiles
 					unsigned int tile_id = 0;
+					std::vector<PathVertex>& threadPathVertexRecords = perThreadPathVertexRecords[i];
 
 					while ((tile_id = id.fetch_add(1)) < total_tile_count) {
 						// Initialize Screen Tile
@@ -533,7 +517,6 @@ public:
 						tile.tile_size = tile_size;
 						tile.x = (tile_id % tiles_x) * tile_size;
 						tile.y = (tile_id / tiles_x) * tile_size;
-						tilePathVertices.clear();
 
 						// Render Tiles
 						for (unsigned int y = tile.start_tile_y(); y <= tile.end_tile_y(film); ++y) {
@@ -550,7 +533,7 @@ public:
 								//Colour col = albedo(ray);
 								//Colour col = direct(ray, &samplers[i]);
 								//Colour col = pathTrace(ray, &samplers[i]);
-								Colour col = guidedPath(ray, &samplers[i], tilePathVertices);
+								Colour col = guidedPath(ray, &samplers[i], threadPathVertexRecords);
 
 								// Check for NaN/Inf values
 								if (std::isnan(col.r) || std::isnan(col.g) || std::isnan(col.b) ||
@@ -576,13 +559,36 @@ public:
 			delete threads[i];
 		}
 
-		// Merge the vertex records from tile-based rendering
-		for (auto& tilePathVertex : tilePathVertices) {
-			globalPathVertices.push_back(tilePathVertex);
+		std::vector<PathVertex> globalPathVertexRecords;
+		size_t total_size = 0;
+		for (auto& recordsList : perThreadPathVertexRecords) {
+			total_size += recordsList.size();
+		}
+		globalPathVertexRecords.reserve(total_size);
+
+		for (auto& recordsList : perThreadPathVertexRecords) {
+			globalPathVertexRecords.insert(
+				globalPathVertexRecords.end(),
+				std::make_move_iterator(recordsList.begin()),
+				std::make_move_iterator(recordsList.end())
+			);
+			recordsList.clear();
+			recordsList.shrink_to_fit();
 		}
 
+		// Testing
+		std::cout << "Global Path Vertex List Size: " << globalPathVertexRecords.size() << std::endl;
+		// List 1000 elements 
+		for (int i = 0; i < 1000; i++) {
+			std::cout << "Global Path Vertex #" << i << " ["
+				<< "\n\tPosition: (" << globalPathVertexRecords[i].position.x << ", " << globalPathVertexRecords[i].position.y << ", " << globalPathVertexRecords[i].position.z << ")"
+				<< "\n\tNormal: (" << globalPathVertexRecords[i].normal.x << ", " << globalPathVertexRecords[i].normal.y << ", " << globalPathVertexRecords[i].normal.z << ")"
+				<< "\n\tIncoming Direction: (" << globalPathVertexRecords[i].wi.x << ", " << globalPathVertexRecords[i].wi.y << ", " << globalPathVertexRecords[i].wi.z << ")"
+				<< "\n\tIncoming Radiance: (" << globalPathVertexRecords[i].Li.r << ", " << globalPathVertexRecords[i].Li.g << ", " << globalPathVertexRecords[i].Li.b << ")"
+				<< "\n]\n" << std::endl;
+		}
 		// Then build the BVH after gathering the records
-		cache.buildPointBVHNode(globalPathVertices);
+		cache.buildPointBVHNode(globalPathVertexRecords);
 	}
 
 	int getSPP() { return film->SPP; }
