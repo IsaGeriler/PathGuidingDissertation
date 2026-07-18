@@ -16,8 +16,6 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-#define ENABLE_MULTITHREAD true
-
 struct ScreenTile {
 	// Default values for x, and y tiles, and tile size
 	unsigned int x = 0, y = 0;
@@ -30,6 +28,70 @@ struct ScreenTile {
 	// Get start and end indexes accros tiles in y-coordinate
 	unsigned int start_tile_y() const { return y; }
 	unsigned int end_tile_y(Film* film) const { return std::min(y + tile_size - 1u, film->height - 1u); }
+};
+
+// --- Struct definitions for Path Guiding Work ---
+struct PathVertex {
+	Vec4 position;  // Hit Point (shadingData.x)
+	Vec4 normal;	// Shading Normal
+	Vec4 wi;	    // Incoming Direction
+	Colour Li;		// Incoming Radiance
+};
+
+struct Record {
+	Vec4 position;			   // Hit Point (shadingData.x)
+	Vec4 normal;			   // Shading Normal
+	Vec4 wi;				   // Incoming Direction
+	Colour direct;			   // Direct Lighting, calculated via NEE
+	Colour indirect;		   // Indirect Lighting without pathThroughput, (fBsdf * cosTheta) / (pdfBsdf * rrp)
+	bool storeRecord = false;  // Do not store if previous surface is pure specular
+};
+
+// --- STree Component to Store PathVertex Caches ---
+class PointBVHNode {
+private:
+	// Attributes
+	AABB bounds;
+	PointBVHNode* r;
+	PointBVHNode* l;
+
+	// Private Methods
+	bool isLeaf() const { return l == nullptr && r == nullptr; }
+	
+	void subdivide(std::vector<PathVertex>& pathVertices) {
+		// Add recursive subdivision here with median splitting
+	}
+
+	void updateBounds(std::vector<PathVertex>& pathVertices) {
+		// Add update bounds code here
+	}
+public:
+	// Constructor
+	PointBVHNode() { r = nullptr; l = nullptr; }
+
+	// Destructor
+	~PointBVHNode() { if (r != nullptr) delete r; if (l != nullptr) delete l; }
+
+	// Public Methods
+	void buildPointBVHNode(std::vector<PathVertex>& inputPathVertices) {
+		// Add PointBVHNode building code here
+	}
+
+	void traversePointBVHNode(const Ray& ray, const std::vector<PathVertex>& pathVertices, IntersectionData& intersection) {
+		// Add PointBVHNode Traversal code here
+	}
+
+	IntersectionData traversePointBVHNode(const Ray& ray, const std::vector<PathVertex>& pathVertices) {
+		IntersectionData intersection;
+		intersection.t = FLT_MAX;
+		traversePointBVHNode(ray, pathVertices, intersection);
+		return intersection;
+	}
+
+	bool traverseVisiblePointBVHNode(const Ray& ray, const std::vector<PathVertex>& pathVertices, const float maxT) {
+		// Add visibility code here
+		return true;
+	}
 };
 
 class RayTracer {
@@ -156,22 +218,6 @@ public:
 	}
 
 	// --- Path Guiding Algorithm Work Start ---
-	struct PathVertex {
-		Vec4 position;  // Hit Point (shadingData.x)
-		Vec4 normal;	// Shading Normal
-		Vec4 wi;	    // Incoming Direction
-		Colour Li;		// Incoming Radiance
-	};
-
-	struct Record {
-		Vec4 position;			   // Hit Point (shadingData.x)
-		Vec4 normal;			   // Shading Normal
-		Vec4 wi;				   // Incoming Direction
-		Colour direct;			   // Direct Lighting, calculated via NEE
-		Colour indirect;		   // Indirect Lighting without pathThroughput, (fBsdf * cosTheta) / (pdfBsdf * rrp)
-		bool storeRecord = false;  // Do not store if previous surface is pure specular
-	};
-
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices) {
 		// Using thread_local to avoid crashing on tiled rendering due to accessing bad memory
 		thread_local std::vector<Record> records;
@@ -453,16 +499,19 @@ public:
 	}
 
 	// Tile-based Rendering
-	#if ENABLE_MULTITHREAD
 	void render() {
 		// Increment SPP and define Atomic ID Counter to battle race conditions
 		film->incrementSPP();
 		std::atomic<int> id = 0;
 
+		// Cached vertices will be stored in a BVH structure
+		PointBVHNode cache;
+
 		// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
 		// Using thread_local to avoid crashing on tiled rendering due to accessing bad memory
-		thread_local std::vector<PathVertex> pathVertices;
-		pathVertices.clear();
+		thread_local std::vector<PathVertex> tilePathVertices;
+		thread_local std::vector<PathVertex> globalPathVertices;
+		globalPathVertices.clear();
 
 		// Get total tile count
 		unsigned int tile_size = 32;
@@ -484,6 +533,7 @@ public:
 						tile.tile_size = tile_size;
 						tile.x = (tile_id % tiles_x) * tile_size;
 						tile.y = (tile_id / tiles_x) * tile_size;
+						tilePathVertices.clear();
 
 						// Render Tiles
 						for (unsigned int y = tile.start_tile_y(); y <= tile.end_tile_y(film); ++y) {
@@ -500,7 +550,7 @@ public:
 								//Colour col = albedo(ray);
 								//Colour col = direct(ray, &samplers[i]);
 								//Colour col = pathTrace(ray, &samplers[i]);
-								Colour col = guidedPath(ray, &samplers[i], pathVertices);
+								Colour col = guidedPath(ray, &samplers[i], tilePathVertices);
 
 								// Check for NaN/Inf values
 								if (std::isnan(col.r) || std::isnan(col.g) || std::isnan(col.b) ||
@@ -525,38 +575,15 @@ public:
 			threads[i]->join();
 			delete threads[i];
 		}
-	}
-	#else
-	void render() {
-		film->incrementSPP();
-		for (unsigned int y = 0; y < film->height; y++) {
-			for (unsigned int x = 0; x < film->width; x++) {
-				// Sample a point in the pixel
-				float px = x + samplers->next();  // + 0.5f
-				float py = y + samplers->next();  // + 0.5f
-				Ray ray = scene->camera.generateRay(px, py);
 
-				// View Barycentrics / Shading Normals / Albedo / Direct Lighting / Path Trace
-				//Colour col = viewBarycentrics(ray);
-				//Colour col = viewNormals(ray);
-				//Colour col = albedo(ray);
-				//Colour col = direct(ray, samplers);
-				Colour col = pathTrace(ray, samplers);
-
-				// Check for NaN/Inf values
-				if (std::isnan(col.r) || std::isnan(col.g) || std::isnan(col.b) ||
-					std::isinf(col.r) || std::isinf(col.g) || std::isinf(col.b)) {
-					continue;
-				}
-
-				film->splat(px, py, col);
-				unsigned char r, g, b;
-				film->tonemap(x, y, r, g, b);
-				canvas->draw(x, y, r, g, b);
-			}
+		// Merge the vertex records from tile-based rendering
+		for (auto& tilePathVertex : tilePathVertices) {
+			globalPathVertices.push_back(tilePathVertex);
 		}
+
+		// Then build the BVH after gathering the records
+		cache.buildPointBVHNode(globalPathVertices);
 	}
-	#endif
 
 	int getSPP() { return film->SPP; }
 	void saveHDR(std::string filename) { film->save(filename); }
