@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <thread>
+#include <vector>
 
 #include "Geometry.h"
 #include "Imaging.h"
@@ -43,7 +45,6 @@ public:
 		canvas = _canvas;
 		film = new Film();
 		film->init((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, new BoxFilter());
-		//film->init((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, new MitchellNetravaliFilter());
 		SYSTEM_INFO sysInfo;
 		GetSystemInfo(&sysInfo);
 		numProcs = sysInfo.dwNumberOfProcessors;
@@ -154,6 +155,187 @@ public:
 		return scene->background->evaluate(r.dir);
 	}
 
+	// --- Path Guiding Algorithm Work Start ---
+	struct PathVertex {
+		Vec4 position;  // Hit Point (shadingData.x)
+		Vec4 normal;	// Shading Normal
+		Vec4 wi;	    // Incoming Direction
+		Colour Li;		// Incoming Radiance
+	};
+
+	struct Record {
+		Vec4 position;			   // Hit Point (shadingData.x)
+		Vec4 normal;			   // Shading Normal
+		Vec4 wi;				   // Incoming Direction
+		Colour direct;			   // Direct Lighting, calculated via NEE
+		Colour indirect;		   // Indirect Lighting without pathThroughput, (fBsdf * cosTheta) / (pdfBsdf * rrp)
+		bool storeRecord = false;  // Do not store if previous surface is pure specular
+	};
+
+	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices) {
+		// Using thread_local to avoid crashing on tiled rendering due to accessing bad memory
+		thread_local std::vector<Record> records;
+		records.clear();
+
+		Colour pathThroughput(1.f, 1.f, 1.f);
+		Colour terminatedColour(0.f, 0.f, 0.f);
+		Colour result = guidedPathRecursive(r, pathThroughput, terminatedColour, 0, sampler, records);
+
+		// Store Each Path Vertex to the vector via Backpropogation
+		Colour incomingRadiance = terminatedColour;
+		for (int i = (int)(records.size() - 1); i >= 0; i--) {
+			// If store record flag is true, store the path vertex
+			if (records[i].storeRecord) {
+				PathVertex pathVertex;
+				pathVertex.position = records[i].position;
+				pathVertex.normal = records[i].normal;
+				pathVertex.wi = records[i].wi;
+				pathVertex.Li = incomingRadiance;
+				pathVertices.push_back(pathVertex);
+			}
+			incomingRadiance = records[i].direct + (records[i].indirect * incomingRadiance);
+		}
+		return result;
+	}
+
+	Colour guidedPathRecursive(Ray& r, Colour& pathThroughput, Colour& terminatedColour, int depth, Sampler* sampler, std::vector<Record>& records, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+		// The logic for the path guiding algorithm will go here...
+		// Sampling will be done on the quad-tree (directional), path vertex will be stored in a BVH (spatial)
+		// So unlike Guo et al. 2018, we will be working on the Spatio-Directional Space
+		// Some notes, so far...
+		//
+		// 1. Path Trace (BSDF)
+		// -> Store each path vertex in an accelleration structire (BVH)
+		//	  -> Position
+		//    -> wi (incoming direction)
+		//    -> Incoming radiance (Li)
+		//
+		// 2. Path Trace
+		// -> When sampling, replace BSDF with the new method, i.e.
+		//    -> Search for nearby vertices from 1.
+		//    -> Project wi into PSS
+		//    -> Invert BSDF sampling
+		//    -> Sample PSS
+		IntersectionData intersection = scene->traverse(r);
+		ShadingData shadingData = scene->calculateShadingData(intersection, r);
+		if (shadingData.t < FLT_MAX) {
+			if (shadingData.bsdf->isLight()) {
+				Colour emitted = shadingData.bsdf->emit(shadingData, shadingData.wo);
+				if (depth == 0 || previousSurfaceSpecular) { terminatedColour = emitted; return pathThroughput * emitted; }
+				// Evaluate MIS for Area Light
+				// Area Light PDF and PMF
+				float pmfLight = 1.f / scene->lights.size();
+				float pdfLight = 1.f / scene->triangles[intersection.ID].area;
+
+				// Handle degenerate PMF / PDF cases
+				if (pmfLight <= 0.f || pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
+
+				float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
+				if (cosThetaPrime <= 0.f) return Colour(0.f, 0.f, 0.f);
+				float distanceSquare = SQ(intersection.t);
+				if (distanceSquare < EPSILON) return Colour(0.f, 0.f, 0.f);
+
+				// Calculate pA of Light and BSDF for MIS
+				float pALight = pdfLight * pmfLight;
+				float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
+
+				// Handle degenerate pA
+				if (pALight < 0.f || pABsdf < 0.f) return Colour(0.f, 0.f, 0.f);
+
+				// Calculate Weight for MIS
+				float wind = weightPowerHeuristics(pABsdf, pALight);
+				terminatedColour = emitted * wind;
+				return pathThroughput * emitted * wind;
+			}
+			// Calculate Direct Lighting (NEE) and multiply with pathThroughput
+			Colour NEE = computeDirect(shadingData, sampler);
+			Colour direct = pathThroughput * NEE;
+
+			// Store the necessary records in the record structure (do this before Russian Roulette step)
+			Record record;
+			record.position = shadingData.x;
+			record.normal = shadingData.sNormal;
+			record.wi = Vec4(0.f, 0.f, 0.f);
+			record.direct = NEE;  // Obtained from computeDirect() without * pathThroughput
+			record.indirect = Colour(0.f, 0.f, 0.f);
+			record.storeRecord = false;
+			records.push_back(record);
+
+			// Since the list will grow as bounces happen, the size - 1 will always give index for the current bounce
+			int index = (int)(records.size() - 1);
+
+			// Apply Russian Roulette Starting at the ray depth 4
+			// Russian Roulette should kick in normally between at depth 3 to 5
+			float rrpRecord = 1.f;
+			if (depth > 3) {
+				// Clamp between EPSILON and 1 to avoid division by zero
+				float rrp = std::min(std::max(EPSILON, pathThroughput.Lum()), 1.f);
+				if (sampler->next() < rrp) { rrpRecord = rrp; pathThroughput = pathThroughput / rrp; }
+				else return direct;
+			}
+
+			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
+			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
+			if (depth == 8) return direct;
+
+			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
+			float pdfBsdf = 0.f;
+			Colour fBsdf;
+			Vec4 wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
+			if (pdfBsdf <= 0.f) return direct;
+			
+			// Define indirect ray (for the next bounce)
+			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
+			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
+
+			// Update throughput
+			// Taking absolute value of cosTheta to fix GlassBSDF rendering
+			float cosTheta = fabs(Dot(wi, shadingData.sNormal));
+			if (cosTheta <= 0.f) return direct;
+			pathThroughput = ((pathThroughput * fBsdf * cosTheta) / pdfBsdf);
+
+			// Eliminate zero-luminance throughput
+			if (pathThroughput.Lum() <= 0.f) return direct;
+
+			// Check for NaN/Inf or negative channel values
+			if (std::isnan(pathThroughput.r) || std::isnan(pathThroughput.g) || std::isnan(pathThroughput.b)) return direct;
+			if (std::isinf(pathThroughput.r) || std::isinf(pathThroughput.g) || std::isinf(pathThroughput.b)) return direct;
+			if (pathThroughput.r < 0.f || pathThroughput.g < 0.f || pathThroughput.b < 0.f) return direct;
+
+			// Now we update wi, Li, and storeRecord as we got the indirect radiance and it's bounce
+			bool isPreviousSurfaceSpecular = shadingData.bsdf->isPureSpecular();
+			records[index].wi = wi;
+			records[index].indirect = (fBsdf * cosTheta) / (pdfBsdf * rrpRecord);
+			records[index].storeRecord = !isPreviousSurfaceSpecular;
+
+			// Recurse through the function, contribute with direct lighting
+			return direct + guidedPathRecursive(indirectRay, pathThroughput, terminatedColour, depth + 1, sampler, records, pdfBsdf, isPreviousSurfaceSpecular);
+		}
+		Colour background = scene->background->evaluate(r.dir);
+		if (depth == 0 || previousSurfaceSpecular) { terminatedColour = background; return pathThroughput * background; }
+		if (background.Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
+		// Evaluate MIS for Environment Map
+		// Infinite Light PDF and PMF
+		float pmfLight = 1.f / scene->lights.size();
+		float pdfLight = scene->background->PDF(shadingData, r.dir);
+
+		// Handle degenerate PMF / PDF cases
+		if (pmfLight <= 0.f || pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
+
+		// Calculate pA of Light and BSDF for MIS
+		float pALight = pmfLight * pdfLight;
+		float pABsdf = previousBsdfPdf;
+
+		// Handle degenerate pA
+		if (pALight < 0.f || pABsdf < 0.f) return Colour(0.f, 0.f, 0.f);
+
+		// Calculate Weight for MIS
+		float wind = weightPowerHeuristics(pABsdf, pALight);
+		terminatedColour = background * wind;
+		return pathThroughput * background * wind;
+	}
+	// --- Path Guiding Algorithm Work End ---
+
 	Colour pathTraceRecursive(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		// Trace ray
 		IntersectionData intersection = scene->traverse(r);
@@ -182,8 +364,16 @@ public:
 			// Calculate Direct Lighting
 			Colour direct = pathThroughput * computeDirect(shadingData, sampler);
 
-			// Terminate when the ray depth exceeds 25 bounces, to avoid infinite recursion
-			if (depth > 24) return direct;
+			// Apply Russian Roulette Starting at the ray depth 4
+			// Russian Roulette should kick in normally between at depth 3 to 5
+			if (depth > 3) {
+				float rrp = std::min(std::max(EPSILON, pathThroughput.Lum()), 1.f);
+				if (sampler->next() < rrp) pathThroughput = pathThroughput / rrp;
+				else return direct;
+			}
+
+			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
+			if (depth == 8) return direct;
 			
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;
@@ -206,14 +396,6 @@ public:
 			if (std::isnan(pathThroughput.r) || std::isnan(pathThroughput.g) || std::isnan(pathThroughput.b)) return direct;
 			if (std::isinf(pathThroughput.r) || std::isinf(pathThroughput.g) || std::isinf(pathThroughput.b)) return direct;
 			if (pathThroughput.r < 0.f || pathThroughput.g < 0.f || pathThroughput.b < 0.f) return direct;
-
-			// Apply Russian Roulette Starting at the ray depth 4
-			// Russian Roulette should kick in normally between at depth 3 to 5
-			if (depth > 3) {
-				float rrp = std::min(std::max(EPSILON, pathThroughput.Lum()), 1.f);
-				if (sampler->next() < rrp) pathThroughput = pathThroughput / rrp;
-				else return direct;
-			}
 			
 			// Recurse until path terminated
 			bool isPreviousSurfaceSpecular = shadingData.bsdf->isPureSpecular();
@@ -277,6 +459,11 @@ public:
 		film->incrementSPP();
 		std::atomic<int> id = 0;
 
+		// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
+		// Using thread_local to avoid crashing on tiled rendering due to accessing bad memory
+		thread_local std::vector<PathVertex> pathVertices;
+		pathVertices.clear();
+
 		// Get total tile count
 		unsigned int tile_size = 32;
 		unsigned int tiles_x = (film->width + tile_size - 1u) / tile_size;
@@ -312,7 +499,8 @@ public:
 								//Colour col = viewNormals(ray);
 								//Colour col = albedo(ray);
 								//Colour col = direct(ray, &samplers[i]);
-								Colour col = pathTrace(ray, &samplers[i]);
+								//Colour col = pathTrace(ray, &samplers[i]);
+								Colour col = guidedPath(ray, &samplers[i], pathVertices);
 
 								// Check for NaN/Inf values
 								if (std::isnan(col.r) || std::isnan(col.g) || std::isnan(col.b) ||

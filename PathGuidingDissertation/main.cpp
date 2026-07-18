@@ -13,14 +13,14 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/bathroom";
 	//std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
-	std::string sceneName = "../Scenes/coffee";
+	//std::string sceneName = "../Scenes/coffee";
 	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
 	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
 	//std::string sceneName = "../Scenes/staircase";
-	//std::string sceneName = "../Scenes/staircase2";
+	std::string sceneName = "../Scenes/staircase2";
 	//std::string sceneName = "../Scenes/veach-bidir";
 	//std::string sceneName = "../Scenes/veach-mis";
 	
@@ -37,7 +37,8 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/Terrain";
 
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 1024;
+	unsigned int SPP = 256;       // Test Render SPP
+	//unsigned int SPP = 4096;    // Ground Truth Render SPP
 
 	if (argc > 1) {
 		std::unordered_map<std::string, std::string> args;
