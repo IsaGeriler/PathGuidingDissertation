@@ -57,7 +57,6 @@ private:
 	PointBVHNode* r;
 	PointBVHNode* l;
 	int offset = 0, used = 0;
-	std::vector<int> pathVerticesIndexes;
 
 	// Private Methods
 	bool isLeaf() const { return l == nullptr && r == nullptr; }
@@ -116,10 +115,6 @@ public:
 		// Add PointBVHNode building code here
 		if (inputPathVertices.empty()) return;
 		offset = 0; used = (int)inputPathVertices.size();
-		pathVerticesIndexes.resize(inputPathVertices.size());
-		for (int i = 0; i < inputPathVertices.size(); i++) {
-			pathVerticesIndexes[i] = i;
-		}
 		updateBounds(inputPathVertices);
 		subdivide(inputPathVertices);
 		std::cout << "PointBVHBuild Successfull\n";
