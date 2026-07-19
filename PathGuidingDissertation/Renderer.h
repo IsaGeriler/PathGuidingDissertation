@@ -56,16 +56,53 @@ private:
 	AABB bounds;
 	PointBVHNode* r;
 	PointBVHNode* l;
+	int offset = 0, used = 0;
+	std::vector<int> pathVerticesIndexes;
 
 	// Private Methods
 	bool isLeaf() const { return l == nullptr && r == nullptr; }
 	
 	void subdivide(std::vector<PathVertex>& pathVertices) {
 		// Add recursive subdivision here with median splitting
+		if (used <= 8) return;
+		Vec4 extend = bounds.max - bounds.min;
+		int ax = 0;
+		if (extend.y > extend.x) ax = 1;
+		if (extend.z > extend[ax]) ax = 2;
+		float splitPos = bounds.min[ax] + extend[ax] * 0.5;
+		int i = offset;
+		int j = i + used - 1;
+		while (i <= j) {
+			if (pathVertices[i].position[ax] < splitPos) i++;
+			else std::swap(pathVertices[i], pathVertices[j--]);
+		}
+		int leftCount = i - offset;
+		if (leftCount == 0 || leftCount == used) return;
+
+		l = new PointBVHNode();
+		l->offset = offset;
+		l->used = leftCount;
+
+		r = new PointBVHNode();
+		r->offset = i;
+		r->used = used - leftCount;
+
+		used = 0;
+
+		l->updateBounds(pathVertices);
+		r->updateBounds(pathVertices);
+
+		l->subdivide(pathVertices);
+		r->subdivide(pathVertices);
 	}
 
 	void updateBounds(std::vector<PathVertex>& pathVertices) {
 		// Add update bounds code here
+		bounds.reset();
+		for (int i = offset; i < offset + used; i++) {
+			Vec4 positionVector = pathVertices[i].position;
+			bounds.extend(positionVector);
+		}
 	}
 public:
 	// Constructor
@@ -77,6 +114,15 @@ public:
 	// Public Methods
 	void buildPointBVHNode(std::vector<PathVertex>& inputPathVertices) {
 		// Add PointBVHNode building code here
+		if (inputPathVertices.empty()) return;
+		offset = 0; used = (int)inputPathVertices.size();
+		pathVerticesIndexes.resize(inputPathVertices.size());
+		for (int i = 0; i < inputPathVertices.size(); i++) {
+			pathVerticesIndexes[i] = i;
+		}
+		updateBounds(inputPathVertices);
+		subdivide(inputPathVertices);
+		std::cout << "PointBVHBuild Successfull\n";
 	}
 };
 
@@ -238,7 +284,7 @@ public:
 		//
 		// 1. Path Trace (BSDF)
 		// -> Store each path vertex in an accelleration structire (BVH)
-		//	  -> Position
+		//    -> Position
 		//    -> wi (incoming direction)
 		//    -> Incoming radiance (Li)
 		//
