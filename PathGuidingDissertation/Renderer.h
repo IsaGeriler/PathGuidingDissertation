@@ -18,6 +18,8 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
+#define GUIDED_PATH true
+
 struct ScreenTile {
 	// Default values for x, and y tiles, and tile size
 	unsigned int x = 0, y = 0;
@@ -600,8 +602,12 @@ public:
 								//Colour col = viewNormals(ray);
 								//Colour col = albedo(ray);
 								//Colour col = direct(ray, &samplers[i]);
-								//Colour col = pathTrace(ray, &samplers[i]);
+								
+								#if GUIDED_PATH
 								Colour col = guidedPath(ray, &samplers[i], threadPathVertexRecords);
+								#else
+								Colour col = pathTrace(ray, &samplers[i]);
+								#endif
 
 								// Check for NaN/Inf values
 								if (std::isnan(col.r) || std::isnan(col.g) || std::isnan(col.b) ||
@@ -627,6 +633,7 @@ public:
 			delete threads[i];
 		}
 
+		#if GUIDED_PATH
 		std::vector<PathVertex> globalPathVertexRecords;
 		size_t total_size = 0;
 		for (auto& recordsList : perThreadPathVertexRecords) {
@@ -657,6 +664,7 @@ public:
 		}
 		// Then build the BVH after gathering the records
 		cache.buildPointBVHNode(globalPathVertexRecords);
+		#endif
 	}
 
 	int getSPP() { return film->SPP; }
