@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/Terrain";
 
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 1;       // Test Render SPP
+	unsigned int SPP = 256;       // Test Render SPP
 	//unsigned int SPP = 4096;    // Ground Truth Render SPP
 
 	if (argc > 1) {

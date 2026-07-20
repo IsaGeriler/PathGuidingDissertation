@@ -7,6 +7,7 @@
 #include <chrono>
 #include <iostream>
 #include <iterator>
+#include <ratio>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -136,14 +137,14 @@ private:
 		}
 	}
 
-	int validateNode(int depth) const {
+	int validateNode(std::vector<PathVertex>& pathVertices, int depth) const {
 		// Check for leaf node case
 		if (isLeaf()) {
 			// Check if we have more used records than the max amount
 			assert(used <= MAX_CHILDNODE_RECORDS && "Leaf carries records over capacity");
 			// Check if the record positions are inside the bounding box or not
 			for (int i = offset; i < offset + used; i++) {
-				assert(bounds.containsPoint(pathVertexRecords[i].position, EPSILON) && "Record outside of its leaf's bounding box.");
+				assert(bounds.containsPoint(pathVertices[i].position, EPSILON) && "Record outside of its leaf's bounding box.");
 			}
 			return used;
 		}
@@ -152,7 +153,7 @@ private:
 		assert(l != nullptr && r != nullptr && "Parent node is missing a child node");
 		assert(bounds.containsAABB(l->bounds, EPSILON) && "Left child's bounding box is not in parent bounding box.");
 		assert(bounds.containsAABB(r->bounds, EPSILON) && "Right child's bounding box is not in parent bounding box.");
-		return l->validateNode(depth + 1) + r->validateNode(depth + 1);
+		return l->validateNode(pathVertices, depth + 1) + r->validateNode(pathVertices, depth + 1);
 	}
 
 	void statsNode(PointBVHNodeStats& bvhStats, int depth) {
@@ -208,7 +209,7 @@ public:
 
 	void validate() {
 		// Start from the root node, depth at 0
-		int counted = validateNode(0);
+		int counted = validateNode(pathVertexRecords, 0);
 		assert(counted == (int)(pathVertexRecords.size()) && "Records lost or duplicated during the build phase.");
 	}
 
@@ -217,14 +218,14 @@ public:
 		bvhStats.memory_in_bytes = pathVertexRecords.size() * sizeof(PathVertex);
 		statsNode(bvhStats, 0);
 		bvhStats.buildTimeMs = buildTime;
-		std::cout << "PointBVHNode ["
-			<< "\n\t-- path vertex records: " << pathVertexRecords.size()
-			<< "\n\t-- nodes: " << bvhStats.nodeCount
-			<< "\n\t-- leaf nodes: " << bvhStats.leafNodeCount
-			<< "\n\t-- depth: " << bvhStats.minLeafDepth << "-" << bvhStats.maxLeafDepth
+		std::cout << "PointBVHNode["
+			<< "\n  -- path vertex records: " << pathVertexRecords.size()
+			<< "\n  -- nodes: " << bvhStats.nodeCount
+			<< "\n  -- leaf nodes: " << bvhStats.leafNodeCount
+			<< "\n  -- depth: " << bvhStats.minLeafDepth << "-" << bvhStats.maxLeafDepth
 			<< " (mean " << (double)bvhStats.sumLeafDepth / (double)bvhStats.leafNodeCount << ")"
-			<< "\n\t-- size: " << bvhStats.memory_in_bytes / SQ(1024.0) << "MB"
-			<< "\n\t-- build time: " << bvhStats.buildTimeMs << "ms\n]\n";
+			<< "\n  -- size: " << bvhStats.memory_in_bytes / SQ(1024.0) << "MB"
+			<< "\n  -- build time: " << bvhStats.buildTimeMs << "ms\n]\n";
 		return bvhStats;
 	}
 };
