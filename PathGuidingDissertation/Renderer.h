@@ -179,7 +179,6 @@ public:
 	~PointBVHNode() {
 		if (r != nullptr) delete r;
 		if (l != nullptr) delete l;
-		if (!pathVertexRecords.empty()) pathVertexRecords.clear();
 	}
 
 	// Public Methods
@@ -446,8 +445,8 @@ public:
 			Record record;
 			record.position = shadingData.x;
 			record.normal = shadingData.sNormal;
-			record.wi = Vec4(0.f, 0.f, 0.f);
-			record.direct = NEE;  // Obtained from computeDirect() without * pathThroughput
+			record.wi = Vec4(0.f, 0.f, 0.f);  // w is not used, but set to 1 for homogenous coordinates (it's like a Vec3, but with w component)
+			record.direct = NEE;			  // Obtained from computeDirect() without the pathThroughput multiplication
 			record.indirect = Colour(0.f, 0.f, 0.f);
 			record.storeRecord = false;
 			records.push_back(record);
@@ -717,7 +716,7 @@ public:
 		}
 
 		#if GUIDED_PATH
-		int collectionSPP = 256 / 8;
+		int collectionSPP = 128 / 8;
 		if (getSPP() < collectionSPP) {
 			std::vector<PathVertex> globalPathVertexRecords;
 			size_t total_size = 0;
