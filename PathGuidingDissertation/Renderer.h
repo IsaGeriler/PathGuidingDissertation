@@ -238,6 +238,13 @@ public:
 	MTRandom* samplers;
 	std::thread** threads;
 	unsigned int numProcs;
+
+	// Cached vertices will be stored in a BVH structure
+	PointBVHNode cache;
+
+	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
+	std::vector<std::vector<PathVertex>> perThreadPathVertexRecords;
+
 	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas) {
 		scene = _scene;
 		canvas = _canvas;
@@ -248,6 +255,7 @@ public:
 		numProcs = sysInfo.dwNumberOfProcessors;
 		threads = new std::thread*[numProcs];
 		samplers = new MTRandom[numProcs];
+		perThreadPathVertexRecords.resize(numProcs);
 		clear();
 	}
 
@@ -641,12 +649,6 @@ public:
 		film->incrementSPP();
 		std::atomic<int> id = 0;
 
-		// Cached vertices will be stored in a BVH structure
-		PointBVHNode cache;
-
-		// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
-		std::vector<std::vector<PathVertex>> perThreadPathVertexRecords(numProcs);
-
 		// Get total tile count
 		unsigned int tile_size = 32;
 		unsigned int tiles_x = (film->width + tile_size - 1u) / tile_size;
@@ -715,28 +717,31 @@ public:
 		}
 
 		#if GUIDED_PATH
-		std::vector<PathVertex> globalPathVertexRecords;
-		size_t total_size = 0;
+		int collectionSPP = 256 / 8;
+		if (getSPP() < collectionSPP) {
+			std::vector<PathVertex> globalPathVertexRecords;
+			size_t total_size = 0;
 
-		// Get the total size and allocate space on the global list
-		for (auto& recordsList : perThreadPathVertexRecords) {
-			total_size += recordsList.size();
+			// Get the total size and allocate space on the global list
+			for (auto& recordsList : perThreadPathVertexRecords) {
+				total_size += recordsList.size();
+			}
+			globalPathVertexRecords.reserve(total_size);
+
+			// Carry the data obtained from tiles to global list
+			for (auto& recordsList : perThreadPathVertexRecords) {
+				globalPathVertexRecords.insert(
+					globalPathVertexRecords.end(),
+					std::make_move_iterator(recordsList.begin()),
+					std::make_move_iterator(recordsList.end())
+				);
+				recordsList.clear();
+				recordsList.shrink_to_fit();
+			}
+
+			// Then build the BVH after gathering the global records
+			cache.buildPointBVHNode(std::move(globalPathVertexRecords));
 		}
-		globalPathVertexRecords.reserve(total_size);
-
-		// Carry the data obtained from tiles to global list
-		for (auto& recordsList : perThreadPathVertexRecords) {
-			globalPathVertexRecords.insert(
-				globalPathVertexRecords.end(),
-				std::make_move_iterator(recordsList.begin()),
-				std::make_move_iterator(recordsList.end())
-			);
-			recordsList.clear();
-			recordsList.shrink_to_fit();
-		}
-
-		// Then build the BVH after gathering the global records
-		cache.buildPointBVHNode(std::move(globalPathVertexRecords));
 		#endif
 	}
 
