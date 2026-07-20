@@ -57,47 +57,68 @@ private:
 	PointBVHNode* r;
 	PointBVHNode* l;
 	int offset = 0, used = 0;
+	const int MAX_CHILD_NODES = 8;
 
 	// Private Methods
 	bool isLeaf() const { return l == nullptr && r == nullptr; }
 	
 	void subdivide(std::vector<PathVertex>& pathVertices) {
-		// Add recursive subdivision here with median splitting
-		if (used <= 8) return;
-		Vec4 extend = bounds.max - bounds.min;
-		int ax = 0;
-		if (extend.y > extend.x) ax = 1;
-		if (extend.z > extend[ax]) ax = 2;
-		float splitPos = bounds.min[ax] + extend[ax] * 0.5;
-		int i = offset;
-		int j = i + used - 1;
-		while (i <= j) {
-			if (pathVertices[i].position[ax] < splitPos) i++;
-			else std::swap(pathVertices[i], pathVertices[j--]);
-		}
-		int leftCount = i - offset;
-		if (leftCount == 0 || leftCount == used) return;
+		// Return if the used node count exceeds max child node count
+		if (used <= MAX_CHILD_NODES) return;
 
+		// Get the extend vector from the AABB bounds
+		Vec4 extendVector = bounds.max - bounds.min;
+
+		// Find the split axis
+		int ax = 0;
+		if (extendVector.y > extendVector.x) ax = 1;
+		if (extendVector.z > extendVector[ax]) ax = 2;
+
+		// Get the first, last, and nth element indexes
+		auto first = pathVertices.begin() + offset;
+		auto nth = pathVertices.begin() + offset + used / 2;
+		auto last = pathVertices.begin() + offset + used;
+
+		// From those indexes, sort elements via a comparator
+		std::nth_element(first, nth, last, 
+			// Lambda function as a comparator, capture the split axis by value
+			// Unlike scene triangle BVH we do not use centroids
+			// Instead, we compare the values of corresponding axis value of position vectors
+			[ax](PathVertex& vertex1, PathVertex& vertex2) {
+				return vertex1.position[ax] < vertex2.position[ax];
+			}
+		);
+
+		// Get the middle index
+		int middle = offset + used / 2;
+
+		// Create left child and assign the values to it's attributes
 		l = new PointBVHNode();
 		l->offset = offset;
-		l->used = leftCount;
+		l->used = used / 2;
 
+		// Create right child and assign the values to it's attributes
 		r = new PointBVHNode();
-		r->offset = i;
-		r->used = used - leftCount;
+		r->offset = middle;
+		r->used = used - used / 2;
 
+		// Reset the node count for the parent
 		used = 0;
 
+		// Update AABB bounds
 		l->updateBounds(pathVertices);
 		r->updateBounds(pathVertices);
 
+		// Subdivide the tree
 		l->subdivide(pathVertices);
 		r->subdivide(pathVertices);
 	}
 
 	void updateBounds(std::vector<PathVertex>& pathVertices) {
-		// Add update bounds code here
+		// Reset the bounds
 		bounds.reset();
+
+		// Extend the bounds according to the position vector
 		for (int i = offset; i < offset + used; i++) {
 			Vec4 positionVector = pathVertices[i].position;
 			bounds.extend(positionVector);
@@ -112,12 +133,18 @@ public:
 
 	// Public Methods
 	void buildPointBVHNode(std::vector<PathVertex>& inputPathVertices) {
-		// Add PointBVHNode building code here
+		// Handle degenerate case where the passed vector is empty
 		if (inputPathVertices.empty()) return;
+
+		// Set these values for the root node
 		offset = 0; used = (int)inputPathVertices.size();
+
+		// Update and subdivide the root node
 		updateBounds(inputPathVertices);
 		subdivide(inputPathVertices);
-		std::cout << "PointBVHBuild Successfull\n";
+
+		// Just for testing, will remove this later...
+		std::cout << "PointBVHNode Build Successful...\n";
 	}
 };
 

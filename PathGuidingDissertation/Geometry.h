@@ -231,8 +231,6 @@ public:
 	}
 };
 
-// TO:DO - Store Each Path Vertex In Accelleration Structure (i.e. BVH)
-//		   This Includes Position, Incoming Direction (wi), and Incoming Radiance
 struct IntersectionData {
 	unsigned int ID = UINT_MAX;
 	float t = FLT_MAX;
@@ -276,7 +274,6 @@ private:
 	}
 
 	float calculateCost(BVHBuildNode& node) {
-		// return node.used * node.bounds.area();
 		return node.used * INTERSECT_COST;
 	}
 
