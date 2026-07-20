@@ -213,6 +213,19 @@ public:
 		Vec4 size = max - min;
 		return ((size.x * size.y) + (size.y * size.z) + (size.x * size.z)) * 2.f;
 	}
+
+	// Cointains a point or AABB in the parent AABB for the PointBVHNode test
+	bool containsPoint(const Vec4& point, float epsilon) const {
+		return (point.x >= min.x - epsilon && point.x <= max.x + epsilon) &&
+			   (point.y >= min.y - epsilon && point.y <= max.y + epsilon) &&
+			   (point.z >= min.z - epsilon && point.z <= max.z + epsilon);
+	}
+
+	bool containsAABB(const AABB& bbox, float epsilon) const {
+		return (bbox.min.x >= min.x - epsilon && bbox.max.x <= max.x + epsilon) &&
+			   (bbox.min.y >= min.y - epsilon && bbox.max.y <= max.y + epsilon) &&
+			   (bbox.min.z >= min.z - epsilon && bbox.max.z <= max.z + epsilon);
+	}
 };
 
 class Sphere {

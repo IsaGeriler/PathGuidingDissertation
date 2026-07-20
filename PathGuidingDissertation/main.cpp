@@ -112,7 +112,7 @@ int main(int argc, char* argv[]) {
 		rt.render();
 		float t = timer.dt();
 		// Write
-		std::cout << t << std::endl;
+		std::cout << "Render Time Per Frame: " << t << "s" << std::endl;
 		if (canvas.keyPressed('P')) {
 			rt.saveHDR(filename);
 		}

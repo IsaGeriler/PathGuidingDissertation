@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <cmath>
+#include <chrono>
 #include <iostream>
 #include <iterator>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "Geometry.h"
@@ -51,6 +54,14 @@ struct Record {
 	bool storeRecord = false;  // Do not store if previous surface is pure specular
 };
 
+struct PointBVHNodeStats {
+	int nodeCount = 0, leafNodeCount = 0;
+	int minLeafDepth = INT_MAX, maxLeafDepth = -INT_MAX;
+	long long sumLeafDepth = 0;
+	size_t memory_in_bytes = 0;
+	double buildTimeMs = 0.0;
+};
+
 // --- STree Component to Store PathVertex Caches ---
 class PointBVHNode {
 private:
@@ -59,14 +70,16 @@ private:
 	PointBVHNode* r;
 	PointBVHNode* l;
 	int offset = 0, used = 0;
-	const int MAX_CHILD_NODES = 8;
+	const int MAX_CHILDNODE_RECORDS = 8;
+	double buildTime = 0.0;
+	std::vector<PathVertex> pathVertexRecords;
 
 	// Private Methods
 	bool isLeaf() const { return l == nullptr && r == nullptr; }
 	
 	void subdivide(std::vector<PathVertex>& pathVertices) {
 		// Return if the used node count exceeds max child node count
-		if (used <= MAX_CHILD_NODES) return;
+		if (used <= MAX_CHILDNODE_RECORDS) return;
 
 		// Get the extend vector from the AABB bounds
 		Vec4 extendVector = bounds.max - bounds.min;
@@ -86,9 +99,7 @@ private:
 			// Lambda function as a comparator, capture the split axis by value
 			// Unlike scene triangle BVH we do not use centroids
 			// Instead, we compare the values of corresponding axis value of position vectors
-			[ax](PathVertex& vertex1, PathVertex& vertex2) {
-				return vertex1.position[ax] < vertex2.position[ax];
-			}
+			[ax](PathVertex& vertex1, PathVertex& vertex2) { return vertex1.position[ax] < vertex2.position[ax]; }
 		);
 
 		// Get the middle index
@@ -119,34 +130,102 @@ private:
 	void updateBounds(std::vector<PathVertex>& pathVertices) {
 		// Reset the bounds
 		bounds.reset();
-
 		// Extend the bounds according to the position vector
 		for (int i = offset; i < offset + used; i++) {
-			Vec4 positionVector = pathVertices[i].position;
-			bounds.extend(positionVector);
+			bounds.extend(pathVertices[i].position);
 		}
+	}
+
+	int validateNode(int depth) const {
+		// Check for leaf node case
+		if (isLeaf()) {
+			// Check if we have more used records than the max amount
+			assert(used <= MAX_CHILDNODE_RECORDS && "Leaf carries records over capacity");
+			// Check if the record positions are inside the bounding box or not
+			for (int i = offset; i < offset + used; i++) {
+				assert(bounds.containsPoint(pathVertexRecords[i].position, EPSILON) && "Record outside of its leaf's bounding box.");
+			}
+			return used;
+		}
+		// Handle not leaf node case
+		assert(used == 0 && "Parent node is abruptly carrying records");
+		assert(l != nullptr && r != nullptr && "Parent node is missing a child node");
+		assert(bounds.containsAABB(l->bounds, EPSILON) && "Left child's bounding box is not in parent bounding box.");
+		assert(bounds.containsAABB(r->bounds, EPSILON) && "Right child's bounding box is not in parent bounding box.");
+		return l->validateNode(depth + 1) + r->validateNode(depth + 1);
+	}
+
+	void statsNode(PointBVHNodeStats& bvhStats, int depth) {
+		bvhStats.nodeCount++;
+		bvhStats.memory_in_bytes += sizeof(PointBVHNode);
+		// Check if leaf node
+		if (isLeaf()) {
+			bvhStats.leafNodeCount++;
+			bvhStats.minLeafDepth = std::min(bvhStats.minLeafDepth, depth);
+			bvhStats.maxLeafDepth = std::max(bvhStats.maxLeafDepth, depth);
+			bvhStats.sumLeafDepth += depth;
+			return;
+		}
+		// Recurse through the child nodes
+		if (l != nullptr) l->statsNode(bvhStats, depth + 1);
+		if (r != nullptr) r->statsNode(bvhStats, depth + 1);
 	}
 public:
 	// Constructor
 	PointBVHNode() { r = nullptr; l = nullptr; }
 
 	// Destructor
-	~PointBVHNode() { if (r != nullptr) delete r; if (l != nullptr) delete l; }
+	~PointBVHNode() {
+		if (r != nullptr) delete r;
+		if (l != nullptr) delete l;
+		if (!pathVertexRecords.empty()) pathVertexRecords.clear();
+	}
 
 	// Public Methods
-	void buildPointBVHNode(std::vector<PathVertex>& inputPathVertices) {
+	void buildPointBVHNode(std::vector<PathVertex>&& inputPathVertices) {
 		// Handle degenerate case where the passed vector is empty
 		if (inputPathVertices.empty()) return;
+		pathVertexRecords = std::move(inputPathVertices);
+
+		// Time the build time using chrono
+		auto start = std::chrono::high_resolution_clock::now();
 
 		// Set these values for the root node
-		offset = 0; used = (int)inputPathVertices.size();
+		offset = 0; used = (int)pathVertexRecords.size();
 
 		// Update and subdivide the root node
-		updateBounds(inputPathVertices);
-		subdivide(inputPathVertices);
+		updateBounds(pathVertexRecords);
+		subdivide(pathVertexRecords);
 
-		// Just for testing, will remove this later...
-		std::cout << "PointBVHNode Build Successful...\n";
+		// End the timing
+		auto end = std::chrono::high_resolution_clock::now();
+
+		// Save the build time, and call validate and stats
+		buildTime = std::chrono::duration<double, std::milli>(end - start).count();
+		validate();
+		stats();
+	}
+
+	void validate() {
+		// Start from the root node, depth at 0
+		int counted = validateNode(0);
+		assert(counted == (int)(pathVertexRecords.size()) && "Records lost or duplicated during the build phase.");
+	}
+
+	PointBVHNodeStats stats() {
+		PointBVHNodeStats bvhStats;
+		bvhStats.memory_in_bytes = pathVertexRecords.size() * sizeof(PathVertex);
+		statsNode(bvhStats, 0);
+		bvhStats.buildTimeMs = buildTime;
+		std::cout << "PointBVHNode ["
+			<< "\n\t-- path vertex records: " << pathVertexRecords.size()
+			<< "\n\t-- nodes: " << bvhStats.nodeCount
+			<< "\n\t-- leaf nodes: " << bvhStats.leafNodeCount
+			<< "\n\t-- depth: " << bvhStats.minLeafDepth << "-" << bvhStats.maxLeafDepth
+			<< " (mean " << (double)bvhStats.sumLeafDepth / (double)bvhStats.leafNodeCount << ")"
+			<< "\n\t-- size: " << bvhStats.memory_in_bytes / SQ(1024.0) << "MB"
+			<< "\n\t-- build time: " << bvhStats.buildTimeMs << "ms\n]\n";
+		return bvhStats;
 	}
 };
 
@@ -275,15 +354,14 @@ public:
 
 	// --- Path Guiding Algorithm Work Start ---
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices) {
-		// Using thread_local to avoid crashing on tiled rendering due to accessing bad memory
-		thread_local std::vector<Record> records;
+		std::vector<Record> records;
 		records.clear();
 
 		Colour pathThroughput(1.f, 1.f, 1.f);
 		Colour terminatedColour(0.f, 0.f, 0.f);
 		Colour result = guidedPathRecursive(r, pathThroughput, terminatedColour, 0, sampler, records);
 
-		// Store Each Path Vertex to the vector via Backpropogation
+		// Store Each Path Vertex to the vector via Backpropagation
 		Colour incomingRadiance = terminatedColour;
 		for (int i = (int)(records.size() - 1); i >= 0; i--) {
 			// If store record flag is true, store the path vertex
@@ -297,6 +375,8 @@ public:
 			}
 			incomingRadiance = records[i].direct + (records[i].indirect * incomingRadiance);
 		}
+		float difference = fabs(incomingRadiance.Lum() - result.Lum());
+		assert(difference <= (std::max(result.Lum(), 1.f) * EPSILON) && "Backpropagation is not equal to the estimator! Capture side bug, assertion failed.");
 		return result;
 	}
 
@@ -322,8 +402,8 @@ public:
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 		if (shadingData.t < FLT_MAX) {
 			if (shadingData.bsdf->isLight()) {
-				Colour emitted = shadingData.bsdf->emit(shadingData, shadingData.wo);
-				if (depth == 0 || previousSurfaceSpecular) { terminatedColour = emitted; return pathThroughput * emitted; }
+				Colour emittedColour = shadingData.bsdf->emit(shadingData, shadingData.wo);
+				if (depth == 0 || previousSurfaceSpecular) { terminatedColour = emittedColour; return pathThroughput * emittedColour; }
 				// Evaluate MIS for Area Light
 				// Area Light PDF and PMF
 				float pmfLight = 1.f / scene->lights.size();
@@ -346,8 +426,8 @@ public:
 
 				// Calculate Weight for MIS
 				float wind = weightPowerHeuristics(pABsdf, pALight);
-				terminatedColour = emitted * wind;
-				return pathThroughput * emitted * wind;
+				terminatedColour = emittedColour * wind;
+				return pathThroughput * emittedColour * wind;
 			}
 			// Calculate Direct Lighting (NEE) and multiply with pathThroughput
 			Colour NEE = computeDirect(shadingData, sampler);
@@ -413,9 +493,9 @@ public:
 			// Recurse through the function, contribute with direct lighting
 			return direct + guidedPathRecursive(indirectRay, pathThroughput, terminatedColour, depth + 1, sampler, records, pdfBsdf, isPreviousSurfaceSpecular);
 		}
-		Colour background = scene->background->evaluate(r.dir);
-		if (depth == 0 || previousSurfaceSpecular) { terminatedColour = background; return pathThroughput * background; }
-		if (background.Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
+		Colour backgroundColour = scene->background->evaluate(r.dir);
+		if (depth == 0 || previousSurfaceSpecular) { terminatedColour = backgroundColour; return pathThroughput * backgroundColour; }
+		if (backgroundColour.Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
 		// Evaluate MIS for Environment Map
 		// Infinite Light PDF and PMF
 		float pmfLight = 1.f / scene->lights.size();
@@ -433,8 +513,8 @@ public:
 
 		// Calculate Weight for MIS
 		float wind = weightPowerHeuristics(pABsdf, pALight);
-		terminatedColour = background * wind;
-		return pathThroughput * background * wind;
+		terminatedColour = backgroundColour * wind;
+		return pathThroughput * backgroundColour * wind;
 	}
 	// --- Path Guiding Algorithm Work End ---
 
@@ -636,11 +716,14 @@ public:
 		#if GUIDED_PATH
 		std::vector<PathVertex> globalPathVertexRecords;
 		size_t total_size = 0;
+
+		// Get the total size and allocate space on the global list
 		for (auto& recordsList : perThreadPathVertexRecords) {
 			total_size += recordsList.size();
 		}
 		globalPathVertexRecords.reserve(total_size);
 
+		// Carry the data obtained from tiles to global list
 		for (auto& recordsList : perThreadPathVertexRecords) {
 			globalPathVertexRecords.insert(
 				globalPathVertexRecords.end(),
@@ -651,19 +734,8 @@ public:
 			recordsList.shrink_to_fit();
 		}
 
-		// Testing
-		std::cout << "Global Path Vertex List Size: " << globalPathVertexRecords.size() << std::endl;
-		// List 1000 elements 
-		for (int i = 0; i < 1000; i++) {
-			std::cout << "Global Path Vertex #" << i << " ["
-				<< "\n\tPosition: (" << globalPathVertexRecords[i].position.x << ", " << globalPathVertexRecords[i].position.y << ", " << globalPathVertexRecords[i].position.z << ")"
-				<< "\n\tNormal: (" << globalPathVertexRecords[i].normal.x << ", " << globalPathVertexRecords[i].normal.y << ", " << globalPathVertexRecords[i].normal.z << ")"
-				<< "\n\tIncoming Direction: (" << globalPathVertexRecords[i].wi.x << ", " << globalPathVertexRecords[i].wi.y << ", " << globalPathVertexRecords[i].wi.z << ")"
-				<< "\n\tIncoming Radiance: (" << globalPathVertexRecords[i].Li.r << ", " << globalPathVertexRecords[i].Li.g << ", " << globalPathVertexRecords[i].Li.b << ")"
-				<< "\n]\n" << std::endl;
-		}
-		// Then build the BVH after gathering the records
-		cache.buildPointBVHNode(globalPathVertexRecords);
+		// Then build the BVH after gathering the global records
+		cache.buildPointBVHNode(std::move(globalPathVertexRecords));
 		#endif
 	}
 
