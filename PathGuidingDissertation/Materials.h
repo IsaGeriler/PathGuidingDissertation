@@ -122,6 +122,7 @@ class BSDF {
 public:
 	Colour emission;
 	virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) = 0;
+	virtual void invert(const Vec4& wi, float& u, float& v) = 0;
 	virtual Colour evaluate(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual float PDF(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual bool isPureSpecular() = 0;
@@ -157,6 +158,10 @@ public:
 
 		// Return incoming direction
 		return wi;
+	}
+
+	void invert(const Vec4& wi, float& u, float& v) {
+		// Adding the signature only, will do the required work after supervisor meeting...
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -201,6 +206,10 @@ public:
 		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / wrLocal.z;  // BSDF = albedo / Dot(wr, n)
 		pdf = 1.f;																	   // PDF = 1 (for perfect specular reflection)
 		return shadingData.frame.toWorld(wrLocal);
+	}
+
+	void invert(const Vec4& wi, float& u, float& v) {
+		// Adding the signature only, will do the required work after supervisor meeting...
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -264,6 +273,10 @@ public:
 		reflectedColour = evaluate(shadingData, wi);
 		pdf = PDF(shadingData, wi);
 		return wi;
+	}
+
+	void invert(const Vec4& wi, float& u, float& v) {
+		// Adding the signature only, will do the required work after supervisor meeting...
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -381,6 +394,10 @@ public:
 		}
 	}
 
+	void invert(const Vec4& wi, float& u, float& v) {
+		// Adding the signature only, will do the required work after supervisor meeting...
+	}
+
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
 		return Colour(0.f, 0.f, 0.f);
 	}
@@ -491,6 +508,10 @@ public:
 			pdf = PDF(shadingData, wi);
 			return wi;
 		}
+	}
+
+	void invert(const Vec4& wi, float& u, float& v) {
+		// Adding the signature only, will do the required work after supervisor meeting...
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -619,6 +640,10 @@ public:
 		return wi;
 	}
 
+	void invert(const Vec4& wi, float& u, float& v) {
+		// Adding the signature only, will do the required work after supervisor meeting...
+	}
+
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
 		// Replace this with OrenNayar evaluation code
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
@@ -717,6 +742,10 @@ public:
 		return wi;
 	}
 
+	void invert(const Vec4& wi, float& u, float& v) {
+		// Adding the signature only, will do the required work after supervisor meeting...
+	}
+
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
 		// Calculate half vector from wi and wo
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
@@ -808,6 +837,10 @@ public:
 	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
 		// Add code to include layered sampling
 		return base->sample(shadingData, sampler, reflectedColour, pdf);
+	}
+
+	void invert(const Vec4& wi, float& u, float& v) {
+		// Adding the signature only, will do the required work after supervisor meeting...
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
