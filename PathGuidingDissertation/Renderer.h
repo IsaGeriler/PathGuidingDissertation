@@ -46,12 +46,16 @@ struct PathVertex {
 	Colour Li;		// Incoming Radiance
 };
 
-struct Record {
+struct ForwardPassRecord {
 	Vec4 position;			   // Hit Point (shadingData.x)
 	Vec4 normal;			   // Shading Normal
 	Vec4 wi;				   // Incoming Direction
-	Colour direct;			   // Direct Lighting, calculated via NEE
-	Colour indirect;		   // Indirect Lighting without pathThroughput, (fBsdf * cosTheta) / (pdfBsdf * rrp)
+
+	Colour bsdfWeight;		   // = (fBsdf * cosTheta) / (pdfBsdf * rrp)
+	Colour directLighting;	   // Next Event Estimation
+	Colour emission;		   // Unweighted emitted colour
+	Colour misEmission;		   // MIS weight applied to emitted colour
+
 	bool storeRecord = false;  // Do not store if previous surface is pure specular
 };
 
@@ -362,33 +366,32 @@ public:
 
 	// --- Path Guiding Algorithm Work Start ---
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices) {
-		std::vector<Record> records;
-		records.clear();
+		// --- 1. Forward Pass Phase ---
+		// Generate the path in the forward pass stage, only populating the vector
+		std::vector<ForwardPassRecord> records;
+		guidedPathRecursive(r, 0, sampler, records);
 
-		Colour pathThroughput(1.f, 1.f, 1.f);
-		Colour terminatedColour(0.f, 0.f, 0.f);
-		Colour result = guidedPathRecursive(r, pathThroughput, terminatedColour, 0, sampler, records);
-
+		// --- 2. Backpropagation Phase ---
+		Colour guidingIncomingRadiance(0.f, 0.f, 0.f);
+		Colour pixelColour(0.f, 0.f, 0.f);
 		// Store Each Path Vertex to the vector via Backpropagation
-		Colour incomingRadiance = terminatedColour;
 		for (int i = (int)(records.size() - 1); i >= 0; i--) {
-			// If store record flag is true, store the path vertex
+			Colour currentIncomingRadiance = guidingIncomingRadiance + records[i].emission;
 			if (records[i].storeRecord) {
 				PathVertex pathVertex;
 				pathVertex.position = records[i].position;
 				pathVertex.normal = records[i].normal;
 				pathVertex.wi = records[i].wi;
-				pathVertex.Li = incomingRadiance;
+				pathVertex.Li = guidingIncomingRadiance;
 				pathVertices.push_back(pathVertex);
 			}
-			incomingRadiance = records[i].direct + (records[i].indirect * incomingRadiance);
+			guidingIncomingRadiance = records[i].emission + (records[i].bsdfWeight * guidingIncomingRadiance);
+			pixelColour = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * pixelColour);
 		}
-		float difference = fabs(incomingRadiance.Lum() - result.Lum());
-		assert(difference <= (std::max(result.Lum(), 1.f) * EPSILON) && "Backpropagation is not equal to the estimator! Capture side bug, assertion failed.");
-		return result;
+		return pixelColour;
 	}
 
-	Colour guidedPathRecursive(Ray& r, Colour& pathThroughput, Colour& terminatedColour, int depth, Sampler* sampler, std::vector<Record>& records, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+	void guidedPathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		// The logic for the path guiding algorithm will go here...
 		// Sampling will be done on the quad-tree (directional), path vertex will be stored in a BVH (spatial)
 		// So unlike Guo et al. 2018, we will be working on the Spatio-Directional Space
@@ -408,121 +411,117 @@ public:
 		//    -> Sample PSS
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
+
+		// Create an empty record for now, will fill in later in the function
+		ForwardPassRecord record;
+		record.position = (shadingData.t < FLT_MAX) ? shadingData.x : Vec4(0.f, 0.f, 0.f);
+		record.normal = (shadingData.t < FLT_MAX) ? shadingData.sNormal : Vec4(0.f, 0.f, 0.f);
+		record.wi = Vec4(0.f, 0.f, 0.f);
+		record.bsdfWeight = Colour(0.f, 0.f, 0.f);
+		record.directLighting = Colour(0.f, 0.f, 0.f);
+		record.emission = Colour(0.f, 0.f, 0.f);
+		record.misEmission = Colour(0.f, 0.f, 0.f);
+		record.storeRecord = false;
+
 		if (shadingData.t < FLT_MAX) {
 			if (shadingData.bsdf->isLight()) {
 				Colour emittedColour = shadingData.bsdf->emit(shadingData, shadingData.wo);
-				if (depth == 0 || previousSurfaceSpecular) { terminatedColour = emittedColour; return pathThroughput * emittedColour; }
-				// Evaluate MIS for Area Light
-				// Area Light PDF and PMF
-				float pmfLight = 1.f / scene->lights.size();
-				float pdfLight = 1.f / scene->triangles[intersection.ID].area;
+				record.emission = emittedColour;
+				if (depth == 0 || previousSurfaceSpecular) {
+					record.misEmission = emittedColour;
+				} else {
+					// Evaluate MIS for Area Light
+					// Area Light PDF and PMF
+					float pmfLight = 1.f / scene->lights.size();
+					float pdfLight = 1.f / scene->triangles[intersection.ID].area;
 
-				// Handle degenerate PMF / PDF cases
-				if (pmfLight <= 0.f || pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
+					// Handle degenerate PMF / PDF cases
+					if (pmfLight > 0.f && pdfLight > 0.f) {
+						float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
+						float distanceSquare = SQ(intersection.t);
+						if (cosThetaPrime > 0.f && distanceSquare > EPSILON) {
+							// Calculate pA of Light and BSDF for MIS
+							float pALight = pdfLight * pmfLight;
+							float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
 
-				float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
-				if (cosThetaPrime <= 0.f) return Colour(0.f, 0.f, 0.f);
-				float distanceSquare = SQ(intersection.t);
-				if (distanceSquare < EPSILON) return Colour(0.f, 0.f, 0.f);
-
-				// Calculate pA of Light and BSDF for MIS
-				float pALight = pdfLight * pmfLight;
-				float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
-
-				// Handle degenerate pA
-				if (pALight < 0.f || pABsdf < 0.f) return Colour(0.f, 0.f, 0.f);
-
-				// Calculate Weight for MIS
-				float wind = weightPowerHeuristics(pABsdf, pALight);
-				terminatedColour = emittedColour * wind;
-				return pathThroughput * emittedColour * wind;
+							// Handle degenerate pA
+							if (pALight >= 0.f && pABsdf >= 0.f) {
+								// Calculate Weight for MIS
+								float wind = weightPowerHeuristics(pABsdf, pALight);
+								record.misEmission = emittedColour * wind;
+							}
+						}
+					}
+				}
+				records.push_back(record);
+				return;
 			}
-			// Calculate Direct Lighting (NEE) and multiply with pathThroughput
-			Colour NEE = computeDirect(shadingData, sampler);
-			Colour direct = pathThroughput * NEE;
-
-			// Store the necessary records in the record structure (do this before Russian Roulette step)
-			Record record;
-			record.position = shadingData.x;
-			record.normal = shadingData.sNormal;
-			record.wi = Vec4(0.f, 0.f, 0.f);  // w is not used, but set to 1 for homogenous coordinates (it's like a Vec3, but with w component)
-			record.direct = NEE;			  // Obtained from computeDirect() without the pathThroughput multiplication
-			record.indirect = Colour(0.f, 0.f, 0.f);
-			record.storeRecord = false;
-			records.push_back(record);
-
-			// Since the list will grow as bounces happen, the size - 1 will always give index for the current bounce
-			int index = (int)(records.size() - 1);
+			// Save the direct lighting (NEE) to the record
+			record.directLighting = computeDirect(shadingData, sampler);
 
 			// Apply Russian Roulette Starting at the ray depth 4
 			// Russian Roulette should kick in normally between at depth 3 to 5
 			float rrpRecord = 1.f;
 			if (depth > 3) {
-				// Clamp between EPSILON and 1 to avoid division by zero
-				float rrp = std::min(std::max(EPSILON, pathThroughput.Lum()), 1.f);
-				if (sampler->next() < rrp) { rrpRecord = rrp; pathThroughput = pathThroughput / rrp; }
-				else return direct;
+				// Using a fixed RRP because we don't have access to pathThroughput anymore...
+				float rrp = 0.7f;
+				if (sampler->next() < rrp) { rrpRecord = rrp; }
+				else { records.push_back(record); return; }
 			}
 
 			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
 			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
-			if (depth == 8) return direct;
+			if (depth == 8) { records.push_back(record); return; }
 
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;
 			Colour fBsdf;
 			Vec4 wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
-			if (pdfBsdf <= 0.f) return direct;
-			
-			// Define indirect ray (for the next bounce)
-			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
-			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
-
-			// Update throughput
-			// Taking absolute value of cosTheta to fix GlassBSDF rendering
 			float cosTheta = fabs(Dot(wi, shadingData.sNormal));
-			if (cosTheta <= 0.f) return direct;
-			pathThroughput = ((pathThroughput * fBsdf * cosTheta) / pdfBsdf);
-
-			// Eliminate zero-luminance throughput
-			if (pathThroughput.Lum() <= 0.f) return direct;
-
-			// Check for NaN/Inf or negative channel values
-			if (std::isnan(pathThroughput.r) || std::isnan(pathThroughput.g) || std::isnan(pathThroughput.b)) return direct;
-			if (std::isinf(pathThroughput.r) || std::isinf(pathThroughput.g) || std::isinf(pathThroughput.b)) return direct;
-			if (pathThroughput.r < 0.f || pathThroughput.g < 0.f || pathThroughput.b < 0.f) return direct;
-
+			if (pdfBsdf <= 0.f || cosTheta <= 0.f) { records.push_back(record); return; }
+			
 			// Now we update wi, Li, and storeRecord as we got the indirect radiance and it's bounce
 			bool isPreviousSurfaceSpecular = shadingData.bsdf->isPureSpecular();
-			records[index].wi = wi;
-			records[index].indirect = (fBsdf * cosTheta) / (pdfBsdf * rrpRecord);
-			records[index].storeRecord = !isPreviousSurfaceSpecular;
+			
+			// Store the necessary records in the record structure
+			record.wi = wi;
+			record.bsdfWeight = (fBsdf * cosTheta) / (pdfBsdf * rrpRecord);
+			record.storeRecord = !isPreviousSurfaceSpecular;
+			records.push_back(record);
 
-			// Recurse through the function, contribute with direct lighting
-			return direct + guidedPathRecursive(indirectRay, pathThroughput, terminatedColour, depth + 1, sampler, records, pdfBsdf, isPreviousSurfaceSpecular);
+			// Define indirect ray (for the next bounce) and recurse through the function
+			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
+			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
+			guidedPathRecursive(indirectRay, depth + 1, sampler, records, pdfBsdf, isPreviousSurfaceSpecular);
+			return;
 		}
 		Colour backgroundColour = scene->background->evaluate(r.dir);
-		if (depth == 0 || previousSurfaceSpecular) { terminatedColour = backgroundColour; return pathThroughput * backgroundColour; }
-		if (backgroundColour.Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
-		// Evaluate MIS for Environment Map
-		// Infinite Light PDF and PMF
-		float pmfLight = 1.f / scene->lights.size();
-		float pdfLight = scene->background->PDF(shadingData, r.dir);
+		record.emission = backgroundColour;
+		if (depth == 0 || previousSurfaceSpecular) {
+			record.misEmission = backgroundColour;
+		}
+		else if (backgroundColour.Lum() > 1e-8f) {
+			// Evaluate MIS for Environment Map
+			// Infinite Light PDF and PMF
+			float pmfLight = 1.f / scene->lights.size();
+			float pdfLight = scene->background->PDF(shadingData, r.dir);
 
-		// Handle degenerate PMF / PDF cases
-		if (pmfLight <= 0.f || pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
+			// Handle degenerate PMF / PDF cases
+			if (pmfLight > 0.f && pdfLight > 0.f) {
+				// Calculate pA of Light and BSDF for MIS
+				float pALight = pmfLight * pdfLight;
+				float pABsdf = previousBsdfPdf;
 
-		// Calculate pA of Light and BSDF for MIS
-		float pALight = pmfLight * pdfLight;
-		float pABsdf = previousBsdfPdf;
-
-		// Handle degenerate pA
-		if (pALight < 0.f || pABsdf < 0.f) return Colour(0.f, 0.f, 0.f);
-
-		// Calculate Weight for MIS
-		float wind = weightPowerHeuristics(pABsdf, pALight);
-		terminatedColour = backgroundColour * wind;
-		return pathThroughput * backgroundColour * wind;
+				// Handle degenerate pA
+				if (pALight >= 0.f && pABsdf >= 0.f) {
+					// Calculate Weight for MIS
+					float wind = weightPowerHeuristics(pABsdf, pALight);
+					record.misEmission = backgroundColour * wind;
+				}
+			}
+		}
+		records.push_back(record);
+		return;
 	}
 	// --- Path Guiding Algorithm Work End ---
 
