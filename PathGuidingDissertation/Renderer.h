@@ -369,6 +369,7 @@ public:
 		// --- 1. Forward Pass Phase ---
 		// Generate the path in the forward pass stage, only populating the vector
 		std::vector<ForwardPassRecord> records;
+		records.reserve(10);  // Max depth: 8, + 2 buffer space
 		guidedPathRecursive(r, 0, sampler, records);
 
 		// --- 2. Backpropagation Phase ---
@@ -382,12 +383,14 @@ public:
 				pathVertex.normal = records[i].normal;
 				pathVertex.wi = records[i].wi;
 				pathVertex.Li = guidingIncomingRadiance;
-				pathVertices.push_back(pathVertex);
+				// Check if the incoming/incident radiance is valid before feeding the vector
+				// This will also avoid memory bloat since we discard zero luminance contributions!
+				if (pathVertex.Li.isValid() && pathVertex.Li.Lum() > 0) pathVertices.push_back(pathVertex);
 			}
 			guidingIncomingRadiance = records[i].emission + (records[i].bsdfWeight * guidingIncomingRadiance);
 			pixelColour = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * pixelColour);
 		}
-		return pixelColour;
+		return guidingIncomingRadiance;
 	}
 
 	void guidedPathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {

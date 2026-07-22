@@ -66,6 +66,10 @@ public:
 		cg = (unsigned char)(g * 255);
 		cb = (unsigned char)(b * 255);
 	}
+
+	bool isValid() const {
+		return !(std::isnan(r) || std::isnan(g) || std::isnan(b)) && !(std::isinf(r) || std::isinf(g) || std::isinf(b));
+	}
 };
 
 class Vec4 {
