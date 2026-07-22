@@ -391,6 +391,7 @@ public:
 			pixelColour = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * pixelColour);
 		}
 		return guidingIncomingRadiance;
+		// return pixelColour;
 	}
 
 	void guidedPathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
