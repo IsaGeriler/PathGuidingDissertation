@@ -376,7 +376,6 @@ public:
 		Colour pixelColour(0.f, 0.f, 0.f);
 		// Store Each Path Vertex to the vector via Backpropagation
 		for (int i = (int)(records.size() - 1); i >= 0; i--) {
-			Colour currentIncomingRadiance = guidingIncomingRadiance + records[i].emission;
 			if (records[i].storeRecord) {
 				PathVertex pathVertex;
 				pathVertex.position = records[i].position;
