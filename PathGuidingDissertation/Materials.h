@@ -122,7 +122,7 @@ class BSDF {
 public:
 	Colour emission;
 	virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) = 0;
-	virtual void invert(const Vec4& wi, float& u, float& v) = 0;
+	virtual void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) = 0;
 	virtual Colour evaluate(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual float PDF(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual bool isPureSpecular() = 0;
@@ -160,8 +160,14 @@ public:
 		return wi;
 	}
 
-	void invert(const Vec4& wi, float& u, float& v) {
-		// Adding the signature only, will do the required work after supervisor meeting...
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+		// Invert Cosine Sample Hemisphere where,
+		// theta = acos(sqrt(r1)), phi = 2 * PI * r2
+		Vec4 wiLocal = shadingData.frame.toLocal(wi);
+		float theta = SphericalCoordinates::sphericalTheta(wiLocal);
+		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
+		u = SQ(cosf(theta));
+		v = phi / (2.f * M_PI);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -208,8 +214,10 @@ public:
 		return shadingData.frame.toWorld(wrLocal);
 	}
 
-	void invert(const Vec4& wi, float& u, float& v) {
-		// Adding the signature only, will do the required work after supervisor meeting...
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+		// GlassBSDF and MirrorBSDF will not be inverted
+		// This is due to Dirac Delta distribution
+		u = 0.f; v = 0.f;
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -275,7 +283,7 @@ public:
 		return wi;
 	}
 
-	void invert(const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
 		// Adding the signature only, will do the required work after supervisor meeting...
 	}
 
@@ -394,8 +402,10 @@ public:
 		}
 	}
 
-	void invert(const Vec4& wi, float& u, float& v) {
-		// Adding the signature only, will do the required work after supervisor meeting...
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+		// GlassBSDF and MirrorBSDF will not be inverted
+		// This is due to Dirac Delta distribution
+		u = 0.f; v = 0.f;
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -510,7 +520,7 @@ public:
 		}
 	}
 
-	void invert(const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
 		// Adding the signature only, will do the required work after supervisor meeting...
 	}
 
@@ -640,12 +650,17 @@ public:
 		return wi;
 	}
 
-	void invert(const Vec4& wi, float& u, float& v) {
-		// Adding the signature only, will do the required work after supervisor meeting...
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+		// Invert Cosine Sample Hemisphere where,
+		// theta = acos(sqrt(r1)), phi = 2 * PI * r2
+		Vec4 wiLocal = shadingData.frame.toLocal(wi);
+		float theta = SphericalCoordinates::sphericalTheta(wiLocal);
+		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
+		u = SQ(cosf(theta));
+		v = phi / (2.f * M_PI);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
-		// Replace this with OrenNayar evaluation code
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 
@@ -742,7 +757,7 @@ public:
 		return wi;
 	}
 
-	void invert(const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
 		// Adding the signature only, will do the required work after supervisor meeting...
 	}
 
@@ -839,8 +854,14 @@ public:
 		return base->sample(shadingData, sampler, reflectedColour, pdf);
 	}
 
-	void invert(const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
 		// Adding the signature only, will do the required work after supervisor meeting...
+		// Placeholder for now, may edit varying on BSDFs
+		Vec4 wiLocal = shadingData.frame.toLocal(wi);
+		float theta = SphericalCoordinates::sphericalTheta(wiLocal);
+		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
+		u = SQ(cosf(theta));
+		v = phi / (2.f * M_PI);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
