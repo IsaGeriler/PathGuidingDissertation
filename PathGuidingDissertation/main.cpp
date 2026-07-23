@@ -23,12 +23,16 @@ static void runTest() {
 	//std::string testMaterial = "Diffuse";
 	//BSDF* testBSDF = new DiffuseBSDF(testTexture);
 
-	std::string testMaterial = "Oren-Nayar";
-    BSDF* testBSDF = new OrenNayarBSDF(testTexture, 0.5f);
+	std::string testMaterial = "Conductor";
+	BSDF* testBSDF = new ConductorBSDF(testTexture, Colour(1.f, 0.6f, 1.5f), Colour(0.65f, 0.85f, 1.f), 0.5f);
+
+	//std::string testMaterial = "Oren-Nayar";
+    //BSDF* testBSDF = new OrenNayarBSDF(testTexture, 0.5f);
 
 	ShadingData testShadingData;
 	testShadingData.sNormal = Vec4(0.f, 1.f, 0.f);
 	testShadingData.gNormal = Vec4(0.f, 1.f, 0.f);
+	testShadingData.wo = Vec4(0.f, 1.f, 0.f);
 	testShadingData.bsdf = testBSDF;
 	testShadingData.frame.fromVector(testShadingData.sNormal);
 	
@@ -63,7 +67,7 @@ static void runTest() {
 			assert(false && "BSDF Inversion Test Failed...");
 		}
 	}
-	std::cout << "PASSED: " << NUMBER_OF_TESTS << "/" << NUMBER_OF_TESTS << " " << testMaterial << " BSDF INVERSION TESTS!" << std::endl;
+	std::cout << "PASSED: " << NUMBER_OF_TESTS << "/" << NUMBER_OF_TESTS << " " << testMaterial << "BSDF INVERSION TESTS!" << std::endl;
 	std::cout << "---------------------------" << std::endl;
 }
 

@@ -268,7 +268,8 @@ public:
 
 		// Sample phi and theta for sampling the half vector
 		float alphaSq = alpha * alpha;
-		float r1 = sampler->next(), r2 = sampler->next();
+		float r1 = sampler->next();
+		float r2 = sampler->next();
 
 		float thetaM = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
 		float phiM = 2.f * M_PI * r2;
@@ -284,7 +285,24 @@ public:
 	}
 
 	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
-		// Adding the signature only, will do the required work after supervisor meeting...
+		if (alpha < EPSILON) {
+			// Treat this case as MirrorBSDF
+			u = 0.f;
+			v = 0.f;
+		} else {
+			Vec4 wiLocal = shadingData.frame.toLocal(wi);
+			Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
+			// thetaM and phiM are obtained from the half vector
+			Vec4 wmLocal = (wiLocal + woLocal).normalize();
+			float theta = SphericalCoordinates::sphericalTheta(wmLocal);
+			float phi = SphericalCoordinates::sphericalPhi(wmLocal);
+			// for u, use it's CDF as we used CDF inversion for sampling!
+			float alphaSq = alpha * alpha;
+			float alphaSqMinusOne = (alphaSq - 1.f);
+			u = (alphaSq / (SQ(cos(theta)) * (alphaSqMinusOne * alphaSqMinusOne) + alphaSqMinusOne)) - (1.f / alphaSqMinusOne);
+			// phi = 2 * PI * v
+			v = phi / (2 * M_PI);
+		}
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -731,15 +749,17 @@ public:
 
 		// Fresnel to compute diffuse or reflect surface
 		Vec4 wiLocal;
+		float r1 = sampler->next();
+		float r2 = sampler->next();
 		float fresnel = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		if (sampler->next() < fresnel) {
 			// Glossy Part - Sample theta and phi from random variables for half vector
 			float e = alphaToPhongExponent();
-			float base = 1.f - sampler->next();
+			float base = 1.f - r1;
 			float power = 1.f / (e + 1.f);
 
 			float thetaH = acosf(pow(base, power));
-			float phiH = 2.f * M_PI * sampler->next();
+			float phiH = 2.f * M_PI * r2;
 
 			// Get half vector
 			Vec4 hLocal = SphericalCoordinates::sphericalToWorld(thetaH, phiH).normalize();
@@ -750,7 +770,7 @@ public:
 			// if (wiLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 		} else {
 			// Diffuse Part - Sample wi with cosine hemisphere
-			wiLocal = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
+			wiLocal = SamplingDistributions::cosineSampleHemisphere(r1, r2);
 		}
 
 		Vec4 wi = shadingData.frame.toWorld(wiLocal);
@@ -857,13 +877,8 @@ public:
 	}
 
 	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
-		// Adding the signature only, will do the required work after supervisor meeting...
-		// Placeholder for now, may edit varying on BSDFs
-		Vec4 wiLocal = shadingData.frame.toLocal(wi);
-		float theta = SphericalCoordinates::sphericalTheta(wiLocal);
-		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
-		u = SQ(cosf(theta));
-		v = phi / (2.f * M_PI);
+		// Add code to invert layered sampling
+		return base->invert(shadingData, wi, u, v);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
