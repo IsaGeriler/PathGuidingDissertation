@@ -22,6 +22,31 @@ public:
 	float next() { return dist(generator); }
 };
 
+// TestSampler Class for Testing BSDF Inversion
+class TestSampler : public Sampler {
+private:
+	float u, v;
+	int called;
+public:
+	TestSampler() : u(0.f) , v(0.f), called(0) {}
+
+	void set(float _u, float _v) {
+		u = _u;
+		v = _v;
+		called = 0;
+	}
+
+	float next() {
+		float randomNumber = 0.f;
+		if (called == 0) randomNumber = u;
+		else if (called == 1) randomNumber = v;
+		else randomNumber = 0.5f;
+		
+		called++;
+		return randomNumber;
+	}
+};
+
 // PSS (Primary Sample Space) will be implemented as a sampler similar to MTRandom
 struct PrimarySample {
 private:

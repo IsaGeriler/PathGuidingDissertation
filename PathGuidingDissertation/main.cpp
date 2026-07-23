@@ -1,5 +1,7 @@
 #define NOMINMAX
 
+#include <cmath>
+#include <iostream>
 #include <unordered_map>
 
 #include "Renderer.h"
@@ -8,15 +10,75 @@
 #include "ThirdParty/GamesEngineering/GEMLoader.h"
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
+static void runTest() {
+	// Add test codes here
+	// Testing BSDF Inversion (DiffuseBSDF & OrenNayarBSDF for now)
+	std::cout << "--- BSDF Inversion Test ---" << std::endl;
+	const int NUMBER_OF_TESTS = 100000;
+	const float TEST_EPSILON = 1e-4f;
+
+	Texture* testTexture = new Texture();
+	testTexture->loadDefault();
+
+	//std::string testMaterial = "Diffuse";
+	//BSDF* testBSDF = new DiffuseBSDF(testTexture);
+
+	std::string testMaterial = "Oren-Nayar";
+    BSDF* testBSDF = new OrenNayarBSDF(testTexture, 0.5f);
+
+	ShadingData testShadingData;
+	testShadingData.sNormal = Vec4(0.f, 1.f, 0.f);
+	testShadingData.gNormal = Vec4(0.f, 1.f, 0.f);
+	testShadingData.bsdf = testBSDF;
+	testShadingData.frame.fromVector(testShadingData.sNormal);
+	
+	MTRandom sampler;
+	TestSampler testSampler;
+
+	for (int i = 0; i < NUMBER_OF_TESTS; i++) {
+		// Sample BSDF
+		float u_in = sampler.next(), v_in = sampler.next();
+		float pdf = 0.f;
+		Colour col(0.f, 0.f, 0.f);
+		testSampler.set(u_in, v_in);
+		Vec4 wi = testShadingData.bsdf->sample(testShadingData, &testSampler, col, pdf);
+
+		// Invert Sample BSDF
+		float u_out = 0.f, v_out = 0.f;
+		testShadingData.bsdf->invert(testShadingData, wi, u_out, v_out);
+
+		if (fabs(v_in - 0.f) < TEST_EPSILON && fabs(v_out - 1.f) < TEST_EPSILON) v_out = 0.f;
+		if (fabs(v_out - 0.f) < TEST_EPSILON && fabs(v_in - 1.f) < TEST_EPSILON) v_in = 0.f;
+
+		// Assertions for Debug Mode
+		float u_diff = fabs(u_in - u_out);
+		float v_diff = fabs(v_in - v_out);
+
+		if (u_diff > TEST_EPSILON || v_diff > TEST_EPSILON) {
+			std::cerr << "INVERSION TEST FAILED!" << std::endl;
+			std::cerr << "INPUT UV: u=" << u_in << ", v=" << v_in << std::endl;
+			std::cerr << "OUTPUT UV: u=" << u_out << ", v=" << v_out << std::endl;
+			std::cerr << "DIFFERENCE UV: u=" << u_diff << ", v=" << v_diff << std::endl;
+			std::cerr << "SAMPLED WI: wi=<" << wi.x << "," << wi.y << "," << wi.z << ">" << std::endl;
+			assert(false && "BSDF Inversion Test Failed...");
+		}
+	}
+	std::cout << "PASSED: " << NUMBER_OF_TESTS << "/" << NUMBER_OF_TESTS << " " << testMaterial << " BSDF INVERSION TESTS!" << std::endl;
+	std::cout << "---------------------------" << std::endl;
+}
+
 int main(int argc, char* argv[]) {
+	// Run testing code first before rendering any stuff!
+	runTest();
+
 	// -- Area Light Test Scenes --
 	//std::string sceneName = "../Scenes/bathroom";
 	//std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
 	//std::string sceneName = "../Scenes/coffee";
-	//std::string sceneName = "../Scenes/cornell-box";
+	std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
-	std::string sceneName = "../Scenes/kitchen";
+	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
 	//std::string sceneName = "../Scenes/staircase";
@@ -37,7 +99,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/Terrain";
 
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 128;       // Test Render SPP (128 to balance between fast/quality renders)
+	unsigned int SPP = 1;       // Test Render SPP (128 to balance between fast/quality renders)
 	//unsigned int SPP = 4096;    // Ground Truth Render SPP
 
 	if (argc > 1) {

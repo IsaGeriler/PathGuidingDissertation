@@ -637,7 +637,9 @@ public:
 	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
 		// Sample incoming direction (z-up coordinate system, local space)
 		// Using DiffuseBSDF's cosine weighted sampling 
-		Vec4 wi = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
+		float r1 = sampler->next();
+		float r2 = sampler->next();
+		Vec4 wi = SamplingDistributions::cosineSampleHemisphere(r1, r2);
 
 		// Convert wi to world space before passing to evaluate and pdf
 		wi = shadingData.frame.toWorld(wi);
