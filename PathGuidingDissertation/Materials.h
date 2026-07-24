@@ -46,7 +46,7 @@ public:
 		float sinThetaTSq = etaSq * sinThetaISq;
 
 		// Total Internal Reflection
-		if (sinThetaTSq > 1.f) return 1.f;
+		if (sinThetaTSq >= 1.f) return 1.f;
 		float cosThetaT = sqrtf(std::max(1.f - sinThetaTSq, 0.f));
 
 		// Fresnel Parallel and Perpendicular
@@ -122,7 +122,7 @@ class BSDF {
 public:
 	Colour emission;
 	virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) = 0;
-	virtual void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) = 0;
+	virtual void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) = 0;
 	virtual Colour evaluate(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual float PDF(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual bool isPureSpecular() = 0;
@@ -160,7 +160,7 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Invert Cosine Sample Hemisphere where,
 		// theta = acos(sqrt(r1)), phi = 2 * PI * r2
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
@@ -168,6 +168,7 @@ public:
 		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
 		u = SQ(cosf(theta));
 		v = phi / (2.f * M_PI);
+		selectProbability = 0.f;
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -214,10 +215,12 @@ public:
 		return shadingData.frame.toWorld(wrLocal);
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// GlassBSDF and MirrorBSDF will not be inverted
 		// This is due to Dirac Delta distribution
-		u = 0.f; v = 0.f;
+		u = 0.f;
+		v = 0.f;
+		selectProbability = 0.f;
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -284,11 +287,12 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		if (alpha < EPSILON) {
 			// Treat this case as MirrorBSDF
 			u = 0.f;
 			v = 0.f;
+			selectProbability = 0.f;
 		} else {
 			Vec4 wiLocal = shadingData.frame.toLocal(wi);
 			Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
@@ -302,6 +306,7 @@ public:
 			u = (alphaSq / (SQ(cos(theta)) * (alphaSqMinusOne * alphaSqMinusOne) + alphaSqMinusOne)) - (1.f / alphaSqMinusOne);
 			// phi = 2 * PI * v
 			v = phi / (2 * M_PI);
+			selectProbability = 0.f;
 		}
 	}
 
@@ -420,10 +425,12 @@ public:
 		}
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// GlassBSDF and MirrorBSDF will not be inverted
 		// This is due to Dirac Delta distribution
-		u = 0.f; v = 0.f;
+		u = 0.f;
+		v = 0.f;
+		selectProbability = 1.f;  // Save Fresnel Probability here...
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -457,89 +464,77 @@ public:
 
 	// Methods
 	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
-		// Convert wo to local space
+		// Convert shadingData.wo to the local space
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-		
-		// Alpha guard case for perfect specular Dielectric BSDF
-		if (alpha < EPSILON) {
-			// Calculate fresnel to determine if we should reflect or refract
-			float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
-			if (sampler->next() < fresnel) {
-				// Reflect
-				Vec4 wiLocal(-woLocal.x, -woLocal.y, woLocal.z);
-				pdf = fresnel;
-				reflectedColour = (albedo->sample(shadingData.tu, shadingData.tv) / fabs(wiLocal.z)) * fresnel;
-				return shadingData.frame.toWorld(wiLocal);
-			} else {
-				// Refract
-				float eta = woLocal.z > 0.f ? extIOR / intIOR : intIOR / extIOR;
-				float etaSq = eta * eta;
-				float sign = woLocal.z > 0.f ? -1.f : 1.f;
 
-				float cosThetaISq = std::max(woLocal.z * woLocal.z, 0.f);
-				float sinThetaISq = std::max(1.f - cosThetaISq, 0.f);
-				float sinThetaTSq = etaSq * sinThetaISq;
-
-				// Total Internal Reflection
-				if (sinThetaTSq > 1.f) {
-					// Perfect Specular Reflection
-					// Treat as mirror with fresnel
-					Vec4 wrLocal(-woLocal.x, -woLocal.y, woLocal.z);
-					pdf = fresnel;
-					reflectedColour = (albedo->sample(shadingData.tu, shadingData.tv) / fabs(wrLocal.z)) * fresnel;
-					return shadingData.frame.toWorld(wrLocal);
-				}
-
-				float cosThetaT = sqrt(std::max(1.f - sinThetaTSq, 0.f));
-				Vec4 wiLocal(-eta * woLocal.x, -eta * woLocal.y, cosThetaT * sign);
-				pdf = 1.f - fresnel;
-				reflectedColour = (albedo->sample(shadingData.tu, shadingData.tv) / fabs(wiLocal.z)) * (1.f - fresnel);
-				return shadingData.frame.toWorld(wiLocal);
-			}
-		}
 		// Sample half vector
 		float alphaSq = alpha * alpha;
-		float r1 = sampler->next(), r2 = sampler->next();
+		float r1 = sampler->next();
+		float r2 = sampler->next();
 
-		float thetaM = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
-		float phiM = 2.f * M_PI * r2;
-		Vec4 wmLocal = SphericalCoordinates::sphericalToWorld(thetaM, phiM);
+		float theta = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
+		float phi = 2.f * M_PI * r2;
 
-		// Calculate fresnel to determine if we should reflect or refract
-		float fresnel = ShadingHelper::fresnelDielectric(Dot(woLocal, wmLocal), intIOR, extIOR);
-		if (sampler->next() < fresnel) {
-			// Reflect (just like ConductorBSDF)
-			Vec4 wiLocal = -woLocal + wmLocal * 2.f * Dot(wmLocal, woLocal);
+		Vec4 wmLocal = SphericalCoordinates::sphericalToWorld(theta, phi);
+
+		// Calculate Fresnel Term
+		float F = ShadingHelper::fresnelDielectric(Dot(woLocal, wmLocal), intIOR, extIOR);
+		float selectProbability = sampler->next();
+
+		if (selectProbability < F) {
+			// Reflect
+			Vec4 wiLocal = -woLocal + (wmLocal * 2 * Dot(wmLocal, woLocal));
+			if (wiLocal.z * woLocal.z <= 0.f) return {};
 			Vec4 wi = shadingData.frame.toWorld(wiLocal);
 			reflectedColour = evaluate(shadingData, wi);
 			pdf = PDF(shadingData, wi);
 			return wi;
 		} else {
 			// Refract
-			Frame wmFrame;
-			wmFrame.fromVector(wmLocal);
-			Vec4 woRefractedFromWm = wmFrame.toLocal(woLocal);
-			float cosThetaI = woRefractedFromWm.z;
+			float cosThetaI = Dot(wmLocal, woLocal);
+			float eta = (cosThetaI > 0.f) ? (extIOR / intIOR) : (intIOR / extIOR);
+			float sign = (cosThetaI > 0.f) ? -1.f : 1.f;
+			if (cosThetaI < 0) cosThetaI = fabs(cosThetaI);
 
-			float eta = cosThetaI > 0.f ? extIOR / intIOR : intIOR / extIOR;
 			float etaSq = eta * eta;
-			float sign = cosThetaI > 0.f ? -1.f : 1.f;
-
-			float cosThetaISq = std::max(cosThetaI * cosThetaI, 0.f);
+			float cosThetaISq = std::max(cosThetaI * cosThetaI, 1.f);
 			float sinThetaISq = std::max(1.f - cosThetaISq, 0.f);
 			float sinThetaTSq = etaSq * sinThetaISq;
-			float cosThetaT = sqrt(std::max(1.f - sinThetaTSq, 0.f));
 
-			Vec4 wiLocal(-eta * woRefractedFromWm.x, -eta * woRefractedFromWm.y, cosThetaT * sign);
-			Vec4 wi = shadingData.frame.toWorld(wmFrame.toWorld(wiLocal));
+			if (sinThetaTSq >= 1.f) {
+				// Total Internal Reflection
+				Vec4 wr = shadingData.frame.toWorld(Vec4(-woLocal.x, -woLocal.y, woLocal.z));
+				pdf = F;
+				reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) * F / fabs(woLocal.z);
+				return wr;
+			}
+
+			float cosThetaT = sqrt(std::max(1.f - sinThetaTSq, 0.f));
+			Vec4 wi = shadingData.frame.toWorld(Vec4(-eta * wmLocal.x, -eta * wmLocal.y, cosThetaT * sign));
 			reflectedColour = evaluate(shadingData, wi);
 			pdf = PDF(shadingData, wi);
 			return wi;
 		}
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Adding the signature only, will do the required work after supervisor meeting...
+		// selectProbability stores Fresnel probability
+
+		Vec4 wiLocal = shadingData.frame.toLocal(wi);
+		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
+		
+		float F = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
+		bool reflect = woLocal.z * wiLocal.z > 0.f;
+
+		if (reflect) {
+			// GGX/Mirror Inversion
+			selectProbability = F * 0.5f;
+		}
+		else {
+			// GGX Refract Inversion
+			selectProbability = F + ((1.f - F) * 0.5f);
+		}
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -552,7 +547,6 @@ public:
 
 		// Handling the perfect specular DielectricBSDF just like GlassBSDF
 		float eta = woLocal.z > 0.f ? extIOR / intIOR : intIOR / extIOR;
-		if (eta == 1.f || alpha < EPSILON) return Colour(0.f, 0.f, 0.f);
 
 		// Determine reflect according to PBRT
 		// https://pbr-book.org/4ed/Reflection_Models/Rough_Dielectric_BSDF
@@ -562,6 +556,7 @@ public:
 		Vec4 wmLocal = wiLocal * etaProbability + woLocal;
 		if (wmLocal.lengthSquare() < EPSILON) return Colour(0.f, 0.f, 0.f);
 		wmLocal = wmLocal.normalize();
+		wmLocal = (Dot(wmLocal, Vec4(0, 0, 1)) > 0.f) ? wmLocal : -wmLocal;
 
 		// Discard backfacing microfacets
 		if (Dot(wmLocal, wiLocal) * wiLocal.z < 0.f || Dot(wmLocal, woLocal) * woLocal.z < 0.f) return Colour(0.f, 0.f, 0.f);
@@ -600,7 +595,6 @@ public:
 
 		// Handling the perfect specular DielectricBSDF just like GlassBSDF
 		float eta = woLocal.z > 0.f ? extIOR / intIOR : intIOR / extIOR;
-		if (eta == 1.f || alpha < EPSILON) return 0.f;
 
 		// Determine reflect according to PBRT
 		// https://pbr-book.org/4ed/Reflection_Models/Rough_Dielectric_BSDF
@@ -610,6 +604,7 @@ public:
 		Vec4 wmLocal = wiLocal * etaProbability + woLocal;
 		if (wmLocal.lengthSquare() < EPSILON) return 0.f;
 		wmLocal = wmLocal.normalize();
+		wmLocal = (Dot(wmLocal, Vec4(0,0,1)) > 0.f) ? wmLocal : -wmLocal;
 
 		// Discard backfacing microfacets
 		if (Dot(wmLocal, wiLocal) * wiLocal.z < 0.f || Dot(wmLocal, woLocal) * woLocal.z < 0.f) return 0.f;
@@ -633,7 +628,7 @@ public:
 		}
 	}
 
-	bool isPureSpecular() { return alpha < EPSILON; }
+	bool isPureSpecular() { return false; }
 	bool isTwoSided() { return false; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -670,7 +665,7 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Invert Cosine Sample Hemisphere where,
 		// theta = acos(sqrt(r1)), phi = 2 * PI * r2
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
@@ -678,6 +673,7 @@ public:
 		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
 		u = SQ(cosf(theta));
 		v = phi / (2.f * M_PI);
+		selectProbability = 0.f;
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -779,8 +775,9 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Adding the signature only, will do the required work after supervisor meeting...
+		// selectProbability stores gloss probability
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -876,9 +873,9 @@ public:
 		return base->sample(shadingData, sampler, reflectedColour, pdf);
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v) {
+	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Add code to invert layered sampling
-		return base->invert(shadingData, wi, u, v);
+		return base->invert(shadingData, wi, u, v, selectProbability);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {

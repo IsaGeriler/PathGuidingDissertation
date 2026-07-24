@@ -23,11 +23,14 @@ static void runTest() {
 	//std::string testMaterial = "Diffuse";
 	//BSDF* testBSDF = new DiffuseBSDF(testTexture);
 
+	//std::string testMaterial = "Oren-Nayar";
+	//BSDF* testBSDF = new OrenNayarBSDF(testTexture, 0.5f);
+
 	std::string testMaterial = "Conductor";
 	BSDF* testBSDF = new ConductorBSDF(testTexture, Colour(1.f, 0.6f, 1.5f), Colour(0.65f, 0.85f, 1.f), 0.5f);
 
-	//std::string testMaterial = "Oren-Nayar";
-    //BSDF* testBSDF = new OrenNayarBSDF(testTexture, 0.5f);
+	//std::string testMaterial = "Dielectric";
+	//BSDF* testBSDF = new DielectricBSDF(testTexture, 1.f, 1.5f, 0.5f);
 
 	ShadingData testShadingData;
 	testShadingData.sNormal = Vec4(0.f, 1.f, 0.f);
@@ -48,8 +51,8 @@ static void runTest() {
 		Vec4 wi = testShadingData.bsdf->sample(testShadingData, &testSampler, col, pdf);
 
 		// Invert Sample BSDF
-		float u_out = 0.f, v_out = 0.f;
-		testShadingData.bsdf->invert(testShadingData, wi, u_out, v_out);
+		float u_out = 0.f, v_out = 0.f, sampleProbability = 0.f;
+		testShadingData.bsdf->invert(testShadingData, wi, u_out, v_out, sampleProbability);
 
 		if (fabs(v_in - 0.f) < TEST_EPSILON && fabs(v_out - 1.f) < TEST_EPSILON) v_out = 0.f;
 		if (fabs(v_out - 0.f) < TEST_EPSILON && fabs(v_in - 1.f) < TEST_EPSILON) v_in = 0.f;
@@ -78,9 +81,9 @@ int main(int argc, char* argv[]) {
 	// -- Area Light Test Scenes --
 	//std::string sceneName = "../Scenes/bathroom";
 	//std::string sceneName = "../Scenes/bathroom2";
-	//std::string sceneName = "../Scenes/bedroom";
+	std::string sceneName = "../Scenes/bedroom";
 	//std::string sceneName = "../Scenes/coffee";
-	std::string sceneName = "../Scenes/cornell-box";
+	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
 	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
@@ -103,7 +106,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/Terrain";
 
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 1;       // Test Render SPP (128 to balance between fast/quality renders)
+	unsigned int SPP = 512;       // Test Render SPP (128 to balance between fast/quality renders)
 	//unsigned int SPP = 4096;    // Ground Truth Render SPP
 
 	if (argc > 1) {

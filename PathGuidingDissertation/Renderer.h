@@ -22,7 +22,7 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-#define GUIDED_PATH true
+#define GUIDED_PATH false
 
 struct ScreenTile {
 	// Default values for x, and y tiles, and tile size
@@ -317,15 +317,11 @@ public:
 			// Sample from light, returns direction instead of point
 			float pdfLight = 0.f;
 			Colour emittedColour;
-			Vec4 directionToLight = light->sample(shadingData, sampler, emittedColour, pdfLight);
+			Vec4 wi = light->sample(shadingData, sampler, emittedColour, pdfLight);
 			if (pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
 
-			// Normalize direction to light
-			Vec4 wi = directionToLight.normalize();
-
 			// Evaluate visibility to outside scene bounds
-			// FIX: Scene Bounds Fix, most noticable in Sibenik Scene
-			// Replaces calculated SceneBounds AABB length with SceneBounds sceneRadius and sceneCentre
+			// Scene Bounds Fix: Replaces calculated SceneBounds AABB length with SceneBounds sceneRadius and sceneCentre
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
 			Vec4 shadowRayOffset(shadingData.x + shadingData.gNormal * (EPSILON * sign));
 			Vec4 sceneBoundOffset = use<SceneBounds>().sceneCentre + (wi * use<SceneBounds>().sceneRadius);
@@ -534,7 +530,8 @@ public:
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 		if (shadingData.t < FLT_MAX) {
 			if (shadingData.bsdf->isLight()) {
-				if (depth == 0 || previousSurfaceSpecular) return pathThroughput * shadingData.bsdf->emit(shadingData, shadingData.wo);
+				Colour emittedColour = shadingData.bsdf->emit(shadingData, shadingData.wo);
+				if (depth == 0 || previousSurfaceSpecular) return pathThroughput * emittedColour;
 				// Evaluate MIS for Area Light
 				// Area Light PDF and PMF
 				float pmfLight = 1.f / scene->lights.size();
@@ -551,7 +548,7 @@ public:
 
 				// Calculate Weight for MIS
 				float wind = weightPowerHeuristics(pABsdf, pALight);
-				return pathThroughput * shadingData.bsdf->emit(shadingData, shadingData.wo) * wind;
+				return pathThroughput * emittedColour * wind;
 			}
 			// Calculate Direct Lighting
 			Colour direct = pathThroughput * computeDirect(shadingData, sampler);
@@ -581,20 +578,17 @@ public:
 			if (cosTheta <= 0.f) return direct;
 			pathThroughput = (pathThroughput * indirect * cosTheta) / pdfBsdf;
 
-			// Eliminate zero-luminance
-			if (pathThroughput.Lum() <= 0.f) return direct;
-
-			// Check for NaN/Inf or negative channel values
-			if (std::isnan(pathThroughput.r) || std::isnan(pathThroughput.g) || std::isnan(pathThroughput.b)) return direct;
-			if (std::isinf(pathThroughput.r) || std::isinf(pathThroughput.g) || std::isinf(pathThroughput.b)) return direct;
+			// Eliminate non-valid bounces
+			if (!pathThroughput.isValid() || pathThroughput.Lum() < 0.f) return direct;
 			if (pathThroughput.r < 0.f || pathThroughput.g < 0.f || pathThroughput.b < 0.f) return direct;
 			
 			// Recurse until path terminated
 			bool isPreviousSurfaceSpecular = shadingData.bsdf->isPureSpecular();
 			return direct + pathTraceRecursive(indirectRay, pathThroughput, depth + 1, sampler, pdfBsdf, isPreviousSurfaceSpecular);
 		}
-		if (depth == 0 || previousSurfaceSpecular) return pathThroughput * scene->background->evaluate(r.dir);
-		if (scene->background->evaluate(r.dir).Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
+		Colour backgroundColour = scene->background->evaluate(r.dir);
+		if (depth == 0 || previousSurfaceSpecular) return pathThroughput * backgroundColour;
+		if (backgroundColour.Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
 		// Evaluate MIS for Environment Map
 		// Infinite Light PDF and PMF
 		float pmfLight = 1.f / scene->lights.size();
@@ -609,7 +603,7 @@ public:
 
 		// Calculate Weight for MIS
 		float wind = weightPowerHeuristics(pABsdf, pALight);
-		return pathThroughput * scene->background->evaluate(r.dir) * wind;
+		return pathThroughput * backgroundColour * wind;
 	}
 
 	Colour pathTrace(Ray& r, Sampler* sampler) {
