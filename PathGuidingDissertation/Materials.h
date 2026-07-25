@@ -467,6 +467,50 @@ public:
 		// Convert shadingData.wo to the local space
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
+		// If alpha is less than epsilon, treat it as a mirror with fresnel
+		if (alpha < EPSILON) {
+			//Vec4 wr(-woLocal.x, -woLocal.y, woLocal.z);
+			//float fresnel = ShadingHelper::fresnelDielectric(wr.z, intIOR, extIOR);
+			//reflectedColour = (albedo->sample(shadingData.tu, shadingData.tv) / fabs(wr.z)) * fresnel;
+			//pdf = 1.f;
+			//return shadingData.frame.toWorld(wr);
+			// Calculate fresnel to determine if we should reflect or refract
+			float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
+			if (sampler->next() < fresnel) {
+				// Reflect
+				Vec4 wiLocal(-woLocal.x, -woLocal.y, woLocal.z);
+				pdf = fresnel;
+				reflectedColour = (albedo->sample(shadingData.tu, shadingData.tv) / fabs(wiLocal.z)) * fresnel;
+				return shadingData.frame.toWorld(wiLocal);
+			}
+			else {
+				// Refract
+				float eta = woLocal.z > 0.f ? extIOR / intIOR : intIOR / extIOR;
+				float etaSq = eta * eta;
+				float sign = woLocal.z > 0.f ? -1.f : 1.f;
+
+				float cosThetaISq = std::max(woLocal.z * woLocal.z, 0.f);
+				float sinThetaISq = std::max(1.f - cosThetaISq, 0.f);
+				float sinThetaTSq = etaSq * sinThetaISq;
+
+				// Total Internal Reflection
+				if (sinThetaTSq > 1.f) {
+					// Perfect Specular Reflection
+					// Treat as mirror with fresnel
+					Vec4 wrLocal(-woLocal.x, -woLocal.y, woLocal.z);
+					pdf = 1.f;
+					reflectedColour = (albedo->sample(shadingData.tu, shadingData.tv) / fabs(wrLocal.z)) * fresnel;
+					return shadingData.frame.toWorld(wrLocal);
+				}
+
+				float cosThetaT = sqrt(std::max(1.f - sinThetaTSq, 0.f));
+				Vec4 wiLocal(-eta * woLocal.x, -eta * woLocal.y, cosThetaT * sign);
+				pdf = 1.f - fresnel;
+				reflectedColour = (albedo->sample(shadingData.tu, shadingData.tv) / fabs(wiLocal.z)) * (1.f - fresnel);
+				return shadingData.frame.toWorld(wiLocal);
+			}
+		}
+
 		// Sample half vector
 		float alphaSq = alpha * alpha;
 		float r1 = sampler->next();
@@ -510,7 +554,9 @@ public:
 			}
 
 			float cosThetaT = sqrt(std::max(1.f - sinThetaTSq, 0.f));
-			Vec4 wi = shadingData.frame.toWorld(Vec4(-eta * wmLocal.x, -eta * wmLocal.y, cosThetaT * sign));
+			Vec4 wiLocal = -woLocal * eta + wmLocal * (eta * Dot(wmLocal, woLocal) - cosThetaT * sign);
+			wiLocal = wiLocal.normalize();
+			Vec4 wi = shadingData.frame.toWorld(wiLocal);
 			reflectedColour = evaluate(shadingData, wi);
 			pdf = PDF(shadingData, wi);
 			return wi;
@@ -542,46 +588,50 @@ public:
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 
-		// Can only sample from visible normals
-		if (woLocal.z == 0.f || wiLocal.z == 0.f) return Colour(0.f, 0.f, 0.f);
+		// If alpha is less than epsilon, treat as a mirror
+		if (alpha < EPSILON) return Colour(0.f, 0.f, 0.f);
 
-		// Handling the perfect specular DielectricBSDF just like GlassBSDF
-		float eta = woLocal.z > 0.f ? extIOR / intIOR : intIOR / extIOR;
+		// Save cosine terms
+		float cosThetaO = woLocal.z;
+		float cosThetaI = wiLocal.z;
 
 		// Determine reflect according to PBRT
 		// https://pbr-book.org/4ed/Reflection_Models/Rough_Dielectric_BSDF
-		bool reflect = woLocal.z * wiLocal.z > 0.f;
+		bool reflect = cosThetaI * cosThetaO > 0.f;
+		float eta = cosThetaO > 0.f ? extIOR / intIOR : intIOR / extIOR;
 		float etaProbability = 1.f;
-		if (!reflect) etaProbability = woLocal.z > 0.f ? eta : 1.f / eta;
+		if (!reflect) etaProbability = cosThetaO > 0.f ? eta : 1.f / eta;
+		
+		// Generalized half-vector
 		Vec4 wmLocal = wiLocal * etaProbability + woLocal;
-		if (wmLocal.lengthSquare() < EPSILON) return Colour(0.f, 0.f, 0.f);
+		// Can only sample from visible normals
+		if (cosThetaO == 0.f || cosThetaI == 0.f || wmLocal.lengthSquare() == 0.f) return Colour(0.f, 0.f, 0.f);
+		
+		// Face forward
 		wmLocal = wmLocal.normalize();
-		wmLocal = (Dot(wmLocal, Vec4(0, 0, 1)) > 0.f) ? wmLocal : -wmLocal;
+		wmLocal = (Dot(wmLocal, Vec4(0.f, 0.f, 1.f)) >= 0.f) ? wmLocal : -wmLocal;
 
 		// Discard backfacing microfacets
-		if (Dot(wmLocal, wiLocal) * wiLocal.z < 0.f || Dot(wmLocal, woLocal) * woLocal.z < 0.f) return Colour(0.f, 0.f, 0.f);
+		if (Dot(wmLocal, wiLocal) * cosThetaI < 0.f || Dot(wmLocal, woLocal) * cosThetaO < 0.f) return Colour(0.f, 0.f, 0.f);
 
 		// BSDF evaluation from ConductorBSDF
 		float F = ShadingHelper::fresnelDielectric(Dot(woLocal, wmLocal), intIOR, extIOR);
 		if (reflect) {
-			if (Dot(woLocal, wmLocal) <= 0.f) return Colour(0.f, 0.f, 0.f);
-			if (wiLocal.z * woLocal.z == 0.f) return Colour(0.f, 0.f, 0.f);
-
 			// Cook-Torrance BRDF
 			float G = ShadingHelper::Gggx(wiLocal, woLocal, alpha);
 			float D = ShadingHelper::Dggx(wmLocal, alpha);
-			return albedo->sample(shadingData.tu, shadingData.tv) * ((F * G * D) / (4.f * wiLocal.z * woLocal.z));
+			return albedo->sample(shadingData.tu, shadingData.tv) * ((F * G * D) / (fabs(4.f * cosThetaI * cosThetaO)));
 		}
 		// BSDF evaluation of Microfacet Refraction
 		else {
 			float etaSq = etaProbability * etaProbability;
-			float denominator = (Dot(wiLocal, wmLocal) + Dot(woLocal, wmLocal) / etaProbability) * (Dot(wiLocal, wmLocal) + Dot(woLocal, wmLocal) / etaProbability);
-			if (denominator <= 0.f) return Colour(0.f, 0.f, 0.f);
+			float denominator = (Dot(wiLocal, wmLocal) + Dot(woLocal, wmLocal) / etaProbability) * (Dot(wiLocal, wmLocal) + Dot(woLocal, wmLocal) / etaProbability) * (cosThetaI * cosThetaO);
+			if (denominator == 0.f) return Colour(0.f, 0.f, 0.f);
 
 			// Cook-Torrance BRDF
 			float G = ShadingHelper::Gggx(wiLocal, woLocal, alpha);
 			float D = ShadingHelper::Dggx(wmLocal, alpha);
-			return albedo->sample(shadingData.tu, shadingData.tv) * (((1.f - F) * G * D) / denominator) * (fabs(Dot(wiLocal, wmLocal)) / fabs(wiLocal.z)) * (fabs(Dot(woLocal, wmLocal)) / fabs(woLocal.z));
+			return albedo->sample(shadingData.tu, shadingData.tv) * (D * (1.f - F) * G * fabs(Dot(wiLocal, wmLocal) * Dot(woLocal, wmLocal) / denominator)) / etaSq;
 		}
 	}
 
@@ -590,45 +640,49 @@ public:
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 
-		// Can only sample from visible normals
-		if (woLocal.z == 0.f || wiLocal.z == 0.f) return 0.f;
+		// If alpha is less than epsilon, treat as a mirror
+		if (alpha < EPSILON) return 0.f;
 
-		// Handling the perfect specular DielectricBSDF just like GlassBSDF
-		float eta = woLocal.z > 0.f ? extIOR / intIOR : intIOR / extIOR;
+		// Save cosine terms
+		float cosThetaO = woLocal.z;
+		float cosThetaI = wiLocal.z;
 
 		// Determine reflect according to PBRT
 		// https://pbr-book.org/4ed/Reflection_Models/Rough_Dielectric_BSDF
-		bool reflect = woLocal.z * wiLocal.z > 0.f;
+		bool reflect = cosThetaI * cosThetaO > 0.f;
+		float eta = cosThetaO > 0.f ? extIOR / intIOR : intIOR / extIOR;
 		float etaProbability = 1.f;
-		if (!reflect) etaProbability = woLocal.z > 0.f ? eta : 1.f / eta;
+		if (!reflect) etaProbability = cosThetaO > 0.f ? eta : 1.f / eta;
+
+		// Generalized half-vector
 		Vec4 wmLocal = wiLocal * etaProbability + woLocal;
-		if (wmLocal.lengthSquare() < EPSILON) return 0.f;
+		// Can only sample from visible normals
+		if (cosThetaO == 0.f || cosThetaI == 0.f || wmLocal.lengthSquare() == 0.f) return 0.f;
+
+		// Face forward
 		wmLocal = wmLocal.normalize();
-		wmLocal = (Dot(wmLocal, Vec4(0,0,1)) > 0.f) ? wmLocal : -wmLocal;
+		wmLocal = (Dot(wmLocal, Vec4(0.f, 0.f, 1.f)) >= 0.f) ? wmLocal : -wmLocal;
 
 		// Discard backfacing microfacets
-		if (Dot(wmLocal, wiLocal) * wiLocal.z < 0.f || Dot(wmLocal, woLocal) * woLocal.z < 0.f) return 0.f;
+		if (Dot(wmLocal, wiLocal) * cosThetaI < 0.f || Dot(wmLocal, woLocal) * cosThetaO < 0.f) return 0.f;
 
-		// PDF evaluation from ConductorBSDF
+		// BSDF evaluation from ConductorBSDF
 		float F = ShadingHelper::fresnelDielectric(Dot(woLocal, wmLocal), intIOR, extIOR);
 		if (reflect) {
-			if (Dot(woLocal, wmLocal) <= 0.f) return 0.f;
-			if (wiLocal.z * woLocal.z == 0.f) return 0.f;
-
+			if (Dot(woLocal, wmLocal) == 0.f) return 0.f;
 			float D = ShadingHelper::Dggx(wmLocal, alpha);
-			return F * ((D * wmLocal.z) / (4.f * Dot(woLocal, wmLocal)));
+			return F * ((D * wmLocal.z) / (4.f * fabs(Dot(woLocal, wmLocal))));
 		}
 		// PDF evaluation of Microfacet Refraction
 		else {
 			float denominator = (Dot(wiLocal, wmLocal) + Dot(woLocal, wmLocal) / etaProbability) * (Dot(wiLocal, wmLocal) + Dot(woLocal, wmLocal) / etaProbability);
-			if (denominator <= 0.f) return 0.f;
-			
+			if (denominator == 0.f) return 0.f;
 			float D = ShadingHelper::Dggx(wmLocal, alpha);
 			return (1.f - F) * ((D * fabs(Dot(woLocal, wmLocal))) / denominator);
 		}
 	}
 
-	bool isPureSpecular() { return false; }
+	bool isPureSpecular() { return alpha < EPSILON; }
 	bool isTwoSided() { return false; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
