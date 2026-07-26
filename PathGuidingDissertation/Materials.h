@@ -789,14 +789,14 @@ public:
 	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
 		// Get outcoming direction
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-		//if (woLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 
 		// Fresnel to compute diffuse or reflect surface
 		Vec4 wiLocal;
 		float r1 = sampler->next();
 		float r2 = sampler->next();
+		float selectProbability = sampler->next();
 		float fresnel = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
-		if (sampler->next() < fresnel) {
+		if (selectProbability < fresnel) {
 			// Glossy Part - Sample theta and phi from random variables for half vector
 			float e = alphaToPhongExponent();
 			float base = 1.f - r1;
@@ -807,11 +807,10 @@ public:
 
 			// Get half vector
 			Vec4 hLocal = SphericalCoordinates::sphericalToWorld(thetaH, phiH).normalize();
-			// if (Dot(woLocal, hLocal) <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 			
 			// Then reflect over half vector
 			wiLocal = hLocal * 2.f * Dot(woLocal, hLocal) - woLocal;
-			// if (wiLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+			if (wiLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 		} else {
 			// Diffuse Part - Sample wi with cosine hemisphere
 			wiLocal = SamplingDistributions::cosineSampleHemisphere(r1, r2);
@@ -841,19 +840,16 @@ public:
 		if (hLocal.lengthSquare() < EPSILON) return Colour(0.f, 0.f, 0.f);
 		hLocal = hLocal.normalize();
 
-		// if (Dot(woLocal, hLocal) <= 0.f) return Colour(0.f, 0.f, 0.f);
-
 		// Calculate ks and kd
 		float e = alphaToPhongExponent();
-		float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
-		//float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
+		float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		float kd = 1.f - ks;
 		
-		// Blinn Normalization Factor
+		// Blinn Normalization Factor (modified)
 		// https://renderwonk.com/publications/s2010-shading-course/gotanda/course_note_practical_implementation_at_triace.pdf
-		float norm = (e + 2.f) / (4.f * M_PI * (2.f - std::powf(2.f, (-e * 0.5f))));
-		float normLowerBound = (e + 2.f) / (8.f * M_PI);
-		float normUpperBound = (e + 4.f) / (8.f * M_PI);
+		float norm = ((e + 2.f) * (e + 4.f)) / (8.f * M_PI * (std::powf(2.f, (-e * 0.5f)) + e));
+		float normLowerBound = (e + 6.f) / (8.f * M_PI);
+		float normUpperBound = (e + 8.f) / (8.f * M_PI);
 
 		// Clamp normalization factor
 		norm = std::min(std::max(normLowerBound, norm), normUpperBound);
@@ -861,7 +857,7 @@ public:
 		// BSDF = kd * DiffuseBSDF + ks * GlossyBSDF
 		float glossyComponent = std::powf(std::max(hLocal.z, 0.f), e);
 		Colour diffuseBSDF = albedo->sample(shadingData.tu, shadingData.tv) * M_1_PI;
-		Colour glossyBSDF = Dot(woLocal, hLocal) <= 0.f ? Colour(0.f, 0.f, 0.f) : Colour(1.f, 1.f, 1.f) * glossyComponent;
+		Colour glossyBSDF = Colour(1.f, 1.f, 1.f) * glossyComponent;
 		return (diffuseBSDF * kd) + (glossyBSDF * norm * ks);
 	}
 
@@ -880,14 +876,12 @@ public:
 
 		// Calculate ks and kd
 		float e = alphaToPhongExponent();
-		float ks = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
-		//float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
+		float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		float kd = 1.f - ks;
 
 		// PDF = kd * DiffusePDF + ks * GlossyPDF
-		// if (Dot(woLocal, hLocal) <= 0.f) return 0.f;
 		float ph = ((e + 1.f) / (2.f * M_PI)) * std::powf(std::max(hLocal.z, 0.f), e);
-		float glossyPDF = Dot(woLocal, hLocal) <= 0.f ? 0.f : (ph / (4.f * Dot(woLocal, hLocal)));
+		float glossyPDF = (Dot(woLocal, hLocal) <= 0.f) ? 0.f : (ph / (4.f * Dot(woLocal, hLocal)));
 		float diffusePDF = SamplingDistributions::cosineHemispherePDF(wiLocal);
 		return (kd * diffusePDF) + (ks * glossyPDF);
 	}

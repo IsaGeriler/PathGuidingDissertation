@@ -84,7 +84,6 @@ public:
 	void build() {
 		// Add BVH building code here
 		// BVH Build
-		// if (bvh != nullptr) delete bvh;
 		bvh = new BVHNode();
 		bvh->build(triangles);
 
@@ -114,7 +113,8 @@ public:
 
 		// Sampling
 		unsigned int nLights = lights.size();
-		unsigned int index = static_cast<unsigned int>(std::min<unsigned int>(std::max<unsigned int>(0u, floorf(sampler->next() * nLights)), nLights - 1u));
+		unsigned int index = static_cast<unsigned int>(floorf(sampler->next() * nLights));
+		if (index < 0 || index >= nLights) { pmf = 0.f; return nullptr; }
 		return lights[index];
 	}
 	
