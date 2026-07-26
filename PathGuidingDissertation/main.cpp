@@ -82,8 +82,8 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/bathroom";
 	//std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
-	std::string sceneName = "../Scenes/coffee";
-	//std::string sceneName = "../Scenes/cornell-box";
+	//std::string sceneName = "../Scenes/coffee";
+	std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
 	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
@@ -102,11 +102,13 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/materialball";
 	//std::string sceneName = "../Scenes/MaterialsScene";
 	//std::string sceneName = "../Scenes/Sibenik";
-	//std::string sceneName = "../Scenes/teapot-full";
 	//std::string sceneName = "../Scenes/Terrain";
 
+	// -- I don't know why it does not work Scene
+	//std::string sceneName = "../Scenes/teapot-full";
+
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 512;       // Test Render SPP (128 to balance between fast/quality renders)
+	unsigned int SPP = 128;       // Test Render SPP (128 to balance between fast/quality renders)
 	//unsigned int SPP = 4096;    // Ground Truth Render SPP
 
 	if (argc > 1) {

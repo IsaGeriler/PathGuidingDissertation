@@ -468,9 +468,9 @@ public:
 				else { records.push_back(record); return; }
 			}
 
-			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
+			// Terminate when the ray depth exceeds 16 bounces, to avoid infinite recursion
 			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
-			if (depth == 8) { records.push_back(record); return; }
+			if (depth > 15) { records.push_back(record); return; }
 
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;
@@ -561,8 +561,8 @@ public:
 				else return direct;
 			}
 
-			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
-			if (depth == 8) return direct;
+			// Terminate when the ray depth exceeds 16 bounces, to avoid infinite recursion
+			if (depth > 15) return direct;
 			
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;

@@ -174,13 +174,16 @@ public:
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
 		// Convert wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
-		if (wiLocal.z <= 0.f) return Colour(0.f, 0.f, 0.f);
+		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
+		if (woLocal.z * wiLocal.z <= 0.f) return Colour(0.f, 0.f, 0.f);
 		return albedo->sample(shadingData.tu, shadingData.tv) * 0.318309886183790671538;
 	}
 
 	float PDF(const ShadingData& shadingData, const Vec4& wi) {
 		// Convert wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
+		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
+		if (woLocal.z * wiLocal.z <= 0.f) return 0.f;
 		return SamplingDistributions::cosineHemispherePDF(wiLocal);
 	}
 
