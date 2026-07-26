@@ -17,3 +17,8 @@
 |:---:|:---:|
 | <img width="1280" height="720" alt="1SPPPixel" src="https://github.com/user-attachments/assets/b97248b9-f274-47d8-bfe2-04bf2389e814" /> | <img width="1280" height="720" alt="KitchenGuidedPathAlphaPixel128SPP" src="https://github.com/user-attachments/assets/109a0f67-140d-47aa-b84d-3048b6f4850a" /> |
 | <img width="720" height="1280" alt="StaircaseGuidedPathAlphaPixel1SPP" src="https://github.com/user-attachments/assets/7d82ec4c-e265-4767-896f-c1a0e2469c0f" /> | <img width="720" height="1280" alt="StaircaseGuidedPathAlphaPixel128SPP" src="https://github.com/user-attachments/assets/c6f0e076-c8ee-4ebf-98bf-39e16b8a4e64" /> |
+
+## DielectricBSDF Fix (before invert() DielectricBSDF)
+| Bedroom 512 SPP Buggy DielectricBSDF | Bedroom 512 SPP Fixed DielectricBSDF |
+|:---:|:---:|
+| <img width="1280" height="720" alt="Bedroom512SPPPathIntegratorBuggyDielectricBSDF" src="https://github.com/user-attachments/assets/b68827b8-74b6-4719-95c8-8db11da6eeba" /> | <img width="1280" height="720" alt="Bedroom512SPPPathIntegratorDielectricBSDF" src="https://github.com/user-attachments/assets/a910db92-307c-4cbc-b089-90c88ccb6a68" /> |
