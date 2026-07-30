@@ -76,7 +76,7 @@ public:
 		if (!isInBoundary(_node->point)) return;
 
 		// Handle case where we cannot divide the quad further
-		if (std::abs(topLeftPosition.u - topLeftPosition.u <= 1.f) && std::abs(topLeftPosition.v - topLeftPosition.v <= 1.f)) {
+		if (std::abs(topLeftPosition.u - bottomRightPosition.u <= 1.f) && std::abs(topLeftPosition.v - bottomRightPosition.v <= 1.f)) {
 			if (node == nullptr) node = _node;
 			return;
 		}

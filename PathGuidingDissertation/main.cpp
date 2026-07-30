@@ -107,9 +107,16 @@ int main(int argc, char* argv[]) {
 	// -- I don't know why it does not work Scene
 	//std::string sceneName = "../Scenes/teapot-full";
 
+	Scene* scene = loadScene(sceneName);
+	GamesEngineeringBase::Window canvas;
+	canvas.create((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, "Tracer", false);
+	RayTracer rt;
+	rt.init(scene, &canvas);
+	bool running = true;
+	GamesEngineeringBase::Timer timer;
+
+	unsigned int SPP = rt.maxSPP;  // Adjust maximum SPP inside Renderer.h, this is modified to ease up Path Guiding (unless prompted in CMD)
 	std::string filename = "GI.hdr";
-	unsigned int SPP = 128;       // Test Render SPP (128 to balance between fast/quality renders)
-	//unsigned int SPP = 4096;    // Ground Truth Render SPP
 
 	if (argc > 1) {
 		std::unordered_map<std::string, std::string> args;
@@ -141,13 +148,7 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
-	Scene* scene = loadScene(sceneName);
-	GamesEngineeringBase::Window canvas;
-	canvas.create((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, "Tracer", false);
-	RayTracer rt;
-	rt.init(scene, &canvas);
-	bool running = true;
-	GamesEngineeringBase::Timer timer;
+	
 
 	while (running) {
 		canvas.checkInput();

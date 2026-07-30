@@ -47,22 +47,30 @@ public:
 	}
 };
 
-// PSS (Primary Sample Space) will be implemented as a sampler similar to MTRandom
-struct PrimarySample {
+// GuidedPathSampler to be included in our nex method, to pass (u,v)
+class GuidedPathSampler : public Sampler {
 private:
-	float valueBackup = 0.f;
-	int modifyBackup = 0, lastModifyIter = 0;
+	// add more random numbers when needed (for Plastic, Dielectric, Layered BSDFs etc.)
+	float u, v;
+	int called;
 public:
-	float value = 0.f;
+	// Constructor
+	GuidedPathSampler() : u(0.f), v(0.f), called(0) {}
 
-	void backup() {
-		valueBackup = value;
-		modifyBackup = lastModifyIter;
+	// Methods
+	void set(float _u, float _v) {
+		u = _u; v = _v;
+		called = 0;
 	}
 
-	void restore() {
-		value = valueBackup;
-		lastModifyIter = modifyBackup;
+	float next() {
+		float randomNumber = 0.f;
+		if (called == 0) randomNumber = u;
+		else if (called == 1) randomNumber = v;
+		else randomNumber = 0.5f;
+
+		called++;
+		return randomNumber;
 	}
 };
 
