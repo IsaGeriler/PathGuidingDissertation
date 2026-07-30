@@ -486,9 +486,9 @@ public:
 				else { records.push_back(record); return; }
 			}
 
-			// Terminate when the ray depth exceeds 16 bounces, to avoid infinite recursion
+			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
 			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
-			if (depth > 15) { records.push_back(record); return; }
+			if (depth > 8) { records.push_back(record); return; }
 
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;
@@ -513,6 +513,7 @@ public:
 					QTree qTree;
 					// Build the QTree fully before we start sampling
 					for (auto& vertex : nearbyVertices) {
+						// TO:DO - Check if a material is transmissive
 						if (Dot(vertex.wi, shadingData.sNormal) < 0.f) continue;
 						float u = 0.f, v = 0.f, u_lobe = 0.f;
 						shadingData.bsdf->invert(shadingData, vertex.wi, u, v, u_lobe);
@@ -528,13 +529,13 @@ public:
 						float r2 = sampler->next();
 						float u_out = 0.f, v_out = 0.f;
 						qTree.sample(r1, r2, u_out, v_out, qTree_pdf);
+						float u_lobe_out = sampler->next();
 						// Then do BSDF sampling with the new numbers obtained
 						// We need to pass our newly obtained u, v, and lobe selection in this sampler
-						GuidedPathSampler* dummySampler = new GuidedPathSampler();
-						dummySampler->set(u_out, v_out);
-						wi = shadingData.bsdf->sample(shadingData, dummySampler, fBsdf, pdfBsdf);
-						// Free memory when done
-						delete dummySampler;
+						GuidedPathSampler dummySampler;
+						dummySampler.set(u_out, v_out);
+						// dummySampler.set(u_out, v_out, u_lobe_out);
+						wi = shadingData.bsdf->sample(shadingData, &dummySampler, fBsdf, pdfBsdf);
 					}
 					// Do Standart Sampling
 					else {
@@ -567,7 +568,7 @@ public:
 			// Define indirect ray (for the next bounce) and recurse through the function
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
 			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
-			guidedPathRecursive(indirectRay, depth + 1, sampler, records, pdfBsdf, isPreviousSurfaceSpecular);
+			generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, isGuidingPhase, pdfBsdf, isPreviousSurfaceSpecular);
 			return;
 		}
 		Colour backgroundColour = scene->background->evaluate(r.dir);
@@ -706,9 +707,9 @@ public:
 				else { records.push_back(record); return; }
 			}
 
-			// Terminate when the ray depth exceeds 16 bounces, to avoid infinite recursion
+			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
 			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
-			if (depth > 15) { records.push_back(record); return; }
+			if (depth > 8) { records.push_back(record); return; }
 
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;
