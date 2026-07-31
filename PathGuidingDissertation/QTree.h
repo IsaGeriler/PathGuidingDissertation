@@ -1,11 +1,16 @@
 #pragma once
 
 struct QTreeBox {
-	float minU, minV;
-	float maxU, maxV;
+	float minU, maxU;
+	float minV, maxV;
 	float area() const { return (maxU - minU) * (maxV - minV); }
 };
 
+// uv-coordinates
+// Child Index 0: Bottom-Left  (0,0)
+// Child Index 1: Bottom-Right (1,0)
+// Child Index 2: Top-Left     (0,1)
+// Child Index 3: Top-Right    (1,1)
 struct QTreeNode {
 	float totalWeight = 0.f;
 	QTreeNode* children[4]{};
@@ -17,11 +22,32 @@ private:
 	void insertRecursive(QTreeNode* node, float u, float v, float luminance, QTreeBox currentBox, int depth) {
 		// Add luminance to node->totalWeight
 		node->totalWeight += luminance;
+
+		// Terminate if we reach the max depth of the tree
 		if (depth == maxDepth) return;
+
 		// Find quadrant index using bounding box midpoints
-		// If node->children[idx] == nullptr, new QTReeNode
+		// Calculate mid-ponts
+		float midU = (currentBox.maxU + currentBox.minU) * 0.5f;
+		float midV = (currentBox.maxV + currentBox.minV) * 0.5f;
+
+		// Obtain index by comparing the points with the mid-points
+		int index = 0;
+		if (u >= midU) index += 1;
+		if (v >= midV) index += 2;
+
+		// If the child is null then create a new tree node
+		if (node->children[index] == nullptr) node->children[index] = new QTreeNode();
+		
 		// Calculate childBox
+		QTreeBox childrenBox;
+		childrenBox.minU = (index % 2 == 1) ? midU : currentBox.minU;
+		childrenBox.maxU = (index % 2 == 1) ? currentBox.maxU : midU;
+		childrenBox.minV = (index % 2 == 1) ? midV : currentBox.minV;
+		childrenBox.maxV = (index % 2 == 1) ? currentBox.maxV : midV;
+		
 		// Recursive call
+		insertRecursive(node->children[index], u, v, luminance, childrenBox, depth + 1);
 	}
 
 	void sampleRecursive(QTreeNode* node, float r1, float r2, QTreeBox currentBox, int depth, float& u, float& v, float& pdf) {
