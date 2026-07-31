@@ -43,8 +43,8 @@ private:
 		QTreeBox childrenBox;
 		childrenBox.minU = (index % 2 == 1) ? midU : currentBox.minU;
 		childrenBox.maxU = (index % 2 == 1) ? currentBox.maxU : midU;
-		childrenBox.minV = (index % 2 == 1) ? midV : currentBox.minV;
-		childrenBox.maxV = (index % 2 == 1) ? currentBox.maxV : midV;
+		childrenBox.minV = (index % 2 >= 2) ? midV : currentBox.minV;
+		childrenBox.maxV = (index % 2 >= 2) ? currentBox.maxV : midV;
 		
 		// Recursive call
 		insertRecursive(node->children[index], u, v, luminance, childrenBox, depth + 1);
@@ -55,6 +55,12 @@ private:
 		// -> calculate output u and v
 		// -> calculate output pdf by totalWeight / root->totalWeight / box.area
 		// -> return
+		if (depth == maxDepth) {
+			u = 0.f;
+			v = 0.f;
+			pdf = (node->totalWeight / root->totalWeight) / currentBox.area();
+			return;
+		}
 		// Roulette with r1
 		// Rescale r1
 		// Calculate childBox
@@ -83,11 +89,11 @@ private:
 		QTreeBox childrenBox;
 		childrenBox.minU = (index % 2 == 1) ? midU : currentBox.minU;
 		childrenBox.maxU = (index % 2 == 1) ? currentBox.maxU : midU;
-		childrenBox.minV = (index % 2 == 1) ? midV : currentBox.minV;
-		childrenBox.maxV = (index % 2 == 1) ? currentBox.maxV : midV;
+		childrenBox.minV = (index % 2 >= 2) ? midV : currentBox.minV;
+		childrenBox.maxV = (index % 2 >= 2) ? currentBox.maxV : midV;
 
 		// Recursive call
-		pdfRecursive(node->children[index], u, v, childrenBox, depth + 1);
+		return pdfRecursive(node->children[index], u, v, childrenBox, depth + 1);
 	}
 
 	void deleteRecursive(QTreeNode* node) {
