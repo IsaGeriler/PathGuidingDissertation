@@ -23,7 +23,7 @@ private:
 		// Add luminance to node->totalWeight
 		node->totalWeight += luminance;
 
-		// Terminate if we reach the max depth of the tree
+		// Terminate the recursion when we reach the max depth of the tree
 		if (depth == maxDepth) return;
 
 		// Find quadrant index using bounding box midpoints
@@ -39,7 +39,7 @@ private:
 		// If the child is null then create a new tree node
 		if (node->children[index] == nullptr) node->children[index] = new QTreeNode();
 		
-		// Calculate childBox
+		// Calculate the child's bounding box
 		QTreeBox childrenBox;
 		childrenBox.minU = (index % 2 == 1) ? midU : currentBox.minU;
 		childrenBox.maxU = (index % 2 == 1) ? currentBox.maxU : midU;
@@ -61,13 +61,33 @@ private:
 		// Recursive call
 	}
 	
-	void pdfRecursive(QTreeNode* node, float u, float v, QTreeBox currentBox, int depth) {
-		// If depth == maxDepth
-		// -> return totalWeight / root->totalWeight / box.area
-		// Find quadrant for (u,v)
-		// If child null OR it's weight 0 return 0
-		// Calculate childBox
+	float pdfRecursive(QTreeNode* node, float u, float v, QTreeBox currentBox, int depth) {
+		// Terminate the recursion when we reach the max depth of the tree
+		// PDF = (currentNodeWeight / rootNodeWeight) / (boundingBoxArea)
+		if (depth == maxDepth) return (node->totalWeight / root->totalWeight) / currentBox.area();
+
+		// Find quadrant index for (u,v) using bounding box midpoints
+		// Calculate mid-ponts
+		float midU = (currentBox.maxU + currentBox.minU) * 0.5f;
+		float midV = (currentBox.maxV + currentBox.minV) * 0.5f;
+
+		// Obtain index by comparing the points with the mid-points
+		int index = 0;
+		if (u >= midU) index += 1;
+		if (v >= midV) index += 2;
+
+		// If the child node is null OR it's weight is 0, return 0
+		if (node->children[index] == nullptr || node->children[index]->totalWeight == 0) return 0.f;
+
+		// Calculate the child's bounding box
+		QTreeBox childrenBox;
+		childrenBox.minU = (index % 2 == 1) ? midU : currentBox.minU;
+		childrenBox.maxU = (index % 2 == 1) ? currentBox.maxU : midU;
+		childrenBox.minV = (index % 2 == 1) ? midV : currentBox.minV;
+		childrenBox.maxV = (index % 2 == 1) ? currentBox.maxV : midV;
+
 		// Recursive call
+		pdfRecursive(node->children[index], u, v, childrenBox, depth + 1);
 	}
 
 	void deleteRecursive(QTreeNode* node) {
