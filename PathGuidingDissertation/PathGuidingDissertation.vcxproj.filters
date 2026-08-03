@@ -44,9 +44,6 @@
     <ClInclude Include="SceneLoader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="QuadTree.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="MyMath.h">
       <Filter>Header Files</Filter>
     </ClInclude>

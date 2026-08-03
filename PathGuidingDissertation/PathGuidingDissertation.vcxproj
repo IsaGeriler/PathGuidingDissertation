@@ -153,7 +153,6 @@
     <ClInclude Include="Metrics.h" />
     <ClInclude Include="MyMath.h" />
     <ClInclude Include="QTree.h" />
-    <ClInclude Include="QuadTree.h" />
     <ClInclude Include="Renderer.h" />
     <ClInclude Include="Sampling.h" />
     <ClInclude Include="Scene.h" />

@@ -7,7 +7,6 @@
 #include "Renderer.h"
 #include "SceneLoader.h"
 
-#include "ThirdParty/GamesEngineering/GEMLoader.h"
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 static void runTest() {
@@ -31,6 +30,9 @@ static void runTest() {
 
 	//std::string testMaterial = "Dielectric";
 	//BSDF* testBSDF = new DielectricBSDF(testTexture, 1.f, 1.5f, 0.5f);
+
+	//std::string testMaterial = "Plastic";
+	//BSDF* testBSDF = new PlasticBSDF(testTexture, 1.f, 1.5f, 0.5f);
 
 	ShadingData testShadingData;
 	testShadingData.sNormal = Vec4(0.f, 1.f, 0.f);
@@ -147,8 +149,6 @@ int main(int argc, char* argv[]) {
 			}
 		}
 	}
-
-	
 
 	while (running) {
 		canvas.checkInput();

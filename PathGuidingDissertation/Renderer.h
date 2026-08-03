@@ -42,14 +42,12 @@ struct ScreenTile {
 // --- Struct definitions for Path Guiding Work ---
 struct PathVertex {
 	Vec4 position;  // Hit Point (shadingData.x)
-	Vec4 normal;	// Shading Normal
 	Vec4 wi;	    // Incoming Direction
 	Colour Li;		// Incoming Radiance
 };
 
 struct ForwardPassRecord {
 	Vec4 position;			   // Hit Point (shadingData.x)
-	Vec4 normal;			   // Shading Normal
 	Vec4 wi;				   // Incoming Direction
 
 	Colour bsdfWeight;		   // = (fBsdf * cosTheta) / (pdfBsdf * rrp)
@@ -68,7 +66,7 @@ struct PointBVHNodeStats {
 	double buildTimeMs = 0.0;
 };
 
-// --- STree Component to Store PathVertex Caches ---
+// --- Spatial-Tree Component to Store PathVertex Caches ---
 class PointBVHNode {
 private:
 	// Attributes
@@ -176,9 +174,41 @@ private:
 		if (l != nullptr) l->statsNode(bvhStats, depth + 1);
 		if (r != nullptr) r->statsNode(bvhStats, depth + 1);
 	}
+
+	void searchNode(Vec4 hitPosition, float radiusSq, std::vector<PathVertex>& pathVertices, std::vector<const PathVertex*>& nearbyVertices, int maxVertices) {
+		// Return if the nearby vertices exceed the max vertices count
+		if (nearbyVertices.size() > maxVertices) return;
+		
+		// Find the closest point in the AABB
+		Vec4 closestPoint;
+		closestPoint.x = std::max(std::min(hitPosition.x, this->bounds.max.x), this->bounds.min.x);
+		closestPoint.y = std::max(std::min(hitPosition.y, this->bounds.max.y), this->bounds.min.y);
+		closestPoint.z = std::max(std::min(hitPosition.z, this->bounds.max.z), this->bounds.min.z);
+
+		// Calculate distance square to prevent sqrt and omit the ones less than radiusSq
+		float distanceSq = (SQ(closestPoint.x - hitPosition.x) + SQ(closestPoint.y - hitPosition.y) + SQ(closestPoint.z - hitPosition.z));
+		if (distanceSq > radiusSq) return;
+
+		if (isLeaf()) {
+			for (int i = offset; i < offset + used; i++) {
+				if (nearbyVertices.size() > maxVertices) return;
+				const PathVertex& vertex = pathVertices[i];
+				float distanceSq2 = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
+				if (distanceSq2 <= radiusSq) nearbyVertices.push_back(&vertex);
+			}
+			return;
+		}
+		else {
+			if (l != nullptr) l->searchNode(hitPosition, radiusSq, pathVertices, nearbyVertices, maxVertices);
+			if (r != nullptr) r->searchNode(hitPosition, radiusSq, pathVertices, nearbyVertices, maxVertices);
+		}
+	}
 public:
 	// Constructor
-	PointBVHNode() { r = nullptr; l = nullptr; }
+	PointBVHNode() {
+		r = nullptr;
+		l = nullptr;
+	}
 
 	// Destructor
 	~PointBVHNode() {
@@ -234,27 +264,9 @@ public:
 	}
 
 	// --- New Method ---
-	void search(Vec4 hitPosition, float radiusSq, std::vector<PathVertex>& nearbyVertices) {
-		// Find the closest point in the AABB
-		Vec4 closestPoint;
-		closestPoint.x = std::max(std::min(hitPosition.x, this->bounds.max.x), this->bounds.min.x);
-		closestPoint.y = std::max(std::min(hitPosition.y, this->bounds.max.y), this->bounds.min.y);
-		closestPoint.z = std::max(std::min(hitPosition.z, this->bounds.max.z), this->bounds.min.z);
-		
-		// Calculate distance square to prevent sqrt and omit the ones less than radiusSq
-		float distanceSq = (SQ(closestPoint.x - hitPosition.x) + SQ(closestPoint.y - hitPosition.y) + SQ(closestPoint.z - hitPosition.z));
-		if (distanceSq > radiusSq) return;
-
-		if (this->isLeaf()) {
-			for (int i = offset; i < offset + used; i++) {
-				const PathVertex& vertex = pathVertexRecords[i];
-				float distanceSq2 = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
-				if (distanceSq2 <= radiusSq) nearbyVertices.push_back(vertex);
-			}
-		} else {
-			if (l != nullptr) l->search(hitPosition, radiusSq, nearbyVertices);
-			if (r != nullptr) r->search(hitPosition, radiusSq, nearbyVertices);
-		}
+	void search(Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices, int maxVertices) {
+		// Search from the root
+		searchNode(hitPosition, radiusSq, pathVertexRecords, nearbyVertices, maxVertices);
 	}
 };
 
@@ -389,49 +401,48 @@ public:
 	}
 
 	// --- Path Guiding Algorithm Work Start ---
-	Colour guidedPathNew(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVHNode* bvh, bool isGuidingPhase) {
+	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVHNode* bvh, bool isGuidingPhase) {
 		// --- 1. Forward Pass Phase ---
-		// Generate the path vertices in the forward pass (only populate the vector)
 		std::vector<ForwardPassRecord> records;
+		std::vector<const PathVertex*> nearbyVertices;
 		records.reserve(10);  // Max depth: 8, + 2 buffer space
-		// -- Rework --
-		generatePathRecursive(r, 0, sampler, records, bvh, isGuidingPhase);
+
+		// Generate the path vertices in the forward pass (only populate the vector)
+		generatePathRecursive(r, 0, sampler, records, bvh, isGuidingPhase, nearbyVertices);
 
 		// --- 2. Backpropagation Phase ---
-		// -- Rework --
-		Colour guidingIncomingRadiance(0.f, 0.f, 0.f);
-		Colour pixelColour(0.f, 0.f, 0.f);
 		// Store Each Path Vertex to the vector via Backpropagation
+		Colour guidingLi(0.f, 0.f, 0.f);
+		Colour pixelColour(0.f, 0.f, 0.f);
 		for (int i = (int)(records.size() - 1); i >= 0; i--) {
 			// Learning Phase: Data Collection
 			if (!isGuidingPhase) {
 				if (records[i].storeRecord) {
 					PathVertex pathVertex;
 					pathVertex.position = records[i].position;
-					pathVertex.normal = records[i].normal;
 					pathVertex.wi = records[i].wi;
-					pathVertex.Li = guidingIncomingRadiance;
+					pathVertex.Li = guidingLi;
 					// Check if the incoming/incident radiance is valid before feeding the vector
 					// This will also avoid memory bloat since we discard zero luminance contributions!
 					if (pathVertex.Li.isValid() && pathVertex.Li.Lum() > 0) pathVertices.push_back(pathVertex);
 				}
-				guidingIncomingRadiance = records[i].emission + (records[i].bsdfWeight * guidingIncomingRadiance);
+				// No NEE, no MIS, just backpropagate the incoming radiance
+				guidingLi = records[i].emission + (records[i].bsdfWeight * guidingLi);
 			}
+			// Rendering Phase: Compute the pixel colour with NEE and MIS (camera)
 			pixelColour = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * pixelColour);
 		}
-		// return guidingIncomingRadiance;
-		return pixelColour;
+		// Return the pixel colour for the rendering phase or return the guidingLi for the learning phase
+		return (!isGuidingPhase) ? guidingLi : pixelColour;
 	}
 
-	// --- Revamp the method for generalization ---
-	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVHNode* cache, bool isGuidingPhase, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVHNode* cache, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 
-		// Create an empty record for now, will fill in later in the function
+		// Create an empty record for now, will fill in later in this function
 		ForwardPassRecord record;
 		record.position = (shadingData.t < FLT_MAX) ? shadingData.x : Vec4(0.f, 0.f, 0.f);
-		record.normal = (shadingData.t < FLT_MAX) ? shadingData.sNormal : Vec4(0.f, 0.f, 0.f);
 		record.wi = Vec4(0.f, 0.f, 0.f);
 		record.bsdfWeight = Colour(0.f, 0.f, 0.f);
 		record.directLighting = Colour(0.f, 0.f, 0.f);
@@ -443,9 +454,7 @@ public:
 			if (shadingData.bsdf->isLight()) {
 				Colour emittedColour = shadingData.bsdf->emit(shadingData, shadingData.wo);
 				record.emission = emittedColour;
-				if (depth == 0 || previousSurfaceSpecular) {
-					record.misEmission = emittedColour;
-				}
+				if (depth == 0 || previousSurfaceSpecular) { record.misEmission = emittedColour; }
 				else {
 					// Evaluate MIS for Area Light
 					// Area Light PDF and PMF
@@ -453,10 +462,10 @@ public:
 					float pdfLight = 1.f / scene->triangles[intersection.ID].area;
 
 					// Handle degenerate PMF / PDF cases
-					if (pmfLight > 0.f && pdfLight > 0.f) {
+					if (pmfLight >= 0.f && pdfLight >= 0.f) {
 						float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
 						float distanceSquare = SQ(intersection.t);
-						if (cosThetaPrime > 0.f && distanceSquare > EPSILON) {
+						if (cosThetaPrime >= 0.f && distanceSquare > EPSILON) {
 							// Calculate pA of Light and BSDF for MIS
 							float pALight = pdfLight * pmfLight;
 							float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
@@ -488,7 +497,7 @@ public:
 
 			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
 			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
-			if (depth > 8) { records.push_back(record); return; }
+			if (depth == 8) { records.push_back(record); return; }
 
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;
@@ -496,7 +505,7 @@ public:
 			Vec4 wi;
 
 			// --- NEW ---
-			std::vector<PathVertex> nearbyVertices;
+			// When sampling, replace BSDF with the new method
 			if (isGuidingPhase && cache != nullptr) {
 				// Guiding Phase
 				// -> When sampling, replace BSDF with the new method, i.e.
@@ -504,52 +513,56 @@ public:
 				//    -> Project wi into PSS
 				//    -> Invert BSDF sampling
 				//    -> Sample PSS
-				float radius = 0.5f;
+				float radius = 0.05f;
 				float radiusSq = radius * radius;
-				cache->search(shadingData.x, radiusSq, nearbyVertices);
+				nearbyVertices.clear();
+				// Search for nearby vertices from 1.
+				cache->search(shadingData.x, radiusSq, nearbyVertices, 400);
 				if (nearbyVertices.empty()) {
 					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 				} else {
-					QTree qTree;
 					// Build the QTree fully before we start sampling
+					QTree qTree;
 					for (auto& vertex : nearbyVertices) {
 						// TO:DO - Check if a material is transmissive
-						if (Dot(vertex.wi, shadingData.sNormal) < 0.f) continue;
+						if (fabs(Dot(vertex->wi, shadingData.sNormal)) < 0.f) continue;
 						float u = 0.f, v = 0.f, u_lobe = 0.f;
-						shadingData.bsdf->invert(shadingData, vertex.wi, u, v, u_lobe);
-						qTree.insert(u, v, vertex.Li.Lum());
+						shadingData.bsdf->invert(shadingData, vertex->wi, u, v, u_lobe);
+						qTree.insert(u, v, vertex->Li.Lum());
 					}
-
 					float strategy = sampler->next();
 					float qTree_pdf = 0.f;
-
-					// Do Guided Sampling
+					
+					// Pick a stragety to either guide the sampling or standard BSDF sampling
 					if (strategy < 0.5f) {
+						// Do Guided Sampling
 						float r1 = sampler->next();
 						float r2 = sampler->next();
 						float u_out = 0.f, v_out = 0.f;
+						// float u_lobe_out = sampler->next();
 						qTree.sample(r1, r2, u_out, v_out, qTree_pdf);
-						float u_lobe_out = sampler->next();
+						
 						// Then do BSDF sampling with the new numbers obtained
-						// We need to pass our newly obtained u, v, and lobe selection in this sampler
+						// We need to pass our newly obtained u, v, (plus later on lobe selection) in this sampler
 						GuidedPathSampler dummySampler;
-						dummySampler.set(u_out, v_out);
-						// dummySampler.set(u_out, v_out, u_lobe_out);
+						dummySampler.set(u_out, v_out);  // dummySampler.set(u_out, v_out, u_lobe_out);
 						wi = shadingData.bsdf->sample(shadingData, &dummySampler, fBsdf, pdfBsdf);
-					}
-					// Do Standart Sampling
-					else {
+					} else {
+						// Do Standart Sampling
 						wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 						float u_out = 0.f, v_out = 0.f, u_lobe = 0.f;
 						shadingData.bsdf->invert(shadingData, wi, u_out, v_out, u_lobe);
+						// What would be the pdf of the tree would be like?
 						qTree_pdf = qTree.pdf(u_out, v_out);
 					}
-					float c1 = 0.5f, c2 = 0.5f;
-					// float finalPdf = c1 * qTree_pdf + c2 * pdfBsdf;
-					pdfBsdf = (c1 * qTree_pdf) + (c2 * pdfBsdf);
+					// finalPdf = c1 * pdfBsdf + c2 * pdfLi; where c1 = 0.5, and c2 = 0.5
+					// float qTree_solid_angle = qTree_pdf * pdfBsdf;
+					// pdfBsdf = (c1 * pdfBsdf) + (c2 * qTree_solid_angle);
+					pdfBsdf = pdfBsdf * (0.5f + 0.5f * qTree_pdf);
 				}
 			} else {
 				// Learning Phase
+				// Sample BSDF as normal
 				wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 			}
 
@@ -568,14 +581,12 @@ public:
 			// Define indirect ray (for the next bounce) and recurse through the function
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
 			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
-			generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, isGuidingPhase, pdfBsdf, isPreviousSurfaceSpecular);
+			generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, isGuidingPhase, nearbyVertices, pdfBsdf, isPreviousSurfaceSpecular);
 			return;
 		}
 		Colour backgroundColour = scene->background->evaluate(r.dir);
 		record.emission = backgroundColour;
-		if (depth == 0 || previousSurfaceSpecular) {
-			record.misEmission = backgroundColour;
-		}
+		if (depth == 0 || previousSurfaceSpecular) { record.misEmission = backgroundColour; }
 		else if (backgroundColour.Lum() > 1e-8f) {
 			// Evaluate MIS for Environment Map
 			// Infinite Light PDF and PMF
@@ -583,169 +594,7 @@ public:
 			float pdfLight = scene->background->PDF(shadingData, r.dir);
 
 			// Handle degenerate PMF / PDF cases
-			if (pmfLight > 0.f && pdfLight > 0.f) {
-				// Calculate pA of Light and BSDF for MIS
-				float pALight = pmfLight * pdfLight;
-				float pABsdf = previousBsdfPdf;
-
-				// Handle degenerate pA
-				if (pALight >= 0.f && pABsdf >= 0.f) {
-					// Calculate Weight for MIS
-					float wind = weightPowerHeuristics(pABsdf, pALight);
-					record.misEmission = backgroundColour * wind;
-				}
-			}
-		}
-		records.push_back(record);
-		return;
-	}
-	// --- End of revamp, delete below ---
-	// --- This serves as a backup snippet of methods ---
-	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices) {
-		// --- 1. Forward Pass Phase ---
-		// Generate the path vertices in the forward pass (only populate the vector)
-		std::vector<ForwardPassRecord> records;
-		records.reserve(10);  // Max depth: 8, + 2 buffer space
-		guidedPathRecursive(r, 0, sampler, records);
-
-		// --- 2. Backpropagation Phase ---
-		Colour guidingIncomingRadiance(0.f, 0.f, 0.f);
-		Colour pixelColour(0.f, 0.f, 0.f);
-		// Store Each Path Vertex to the vector via Backpropagation
-		for (int i = (int)(records.size() - 1); i >= 0; i--) {
-			if (records[i].storeRecord) {
-				PathVertex pathVertex;
-				pathVertex.position = records[i].position;
-				pathVertex.normal = records[i].normal;
-				pathVertex.wi = records[i].wi;
-				pathVertex.Li = guidingIncomingRadiance;
-				// Check if the incoming/incident radiance is valid before feeding the vector
-				// This will also avoid memory bloat since we discard zero luminance contributions!
-				if (pathVertex.Li.isValid() && pathVertex.Li.Lum() > 0) pathVertices.push_back(pathVertex);
-			}
-			guidingIncomingRadiance = records[i].emission + (records[i].bsdfWeight * guidingIncomingRadiance);
-			pixelColour = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * pixelColour);
-		}
-		return guidingIncomingRadiance;
-		// return pixelColour;
-	}
-	void guidedPathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
-		// The logic for the path guiding algorithm will go here...
-		// Sampling will be done on the quad-tree (directional), path vertex will be stored in a BVH (spatial)
-		// So unlike Guo et al. 2018, we will be working on the Spatio-Directional Space
-		// Some notes, so far...
-		//
-		// 1. Path Trace (BSDF)
-		// -> Store each path vertex in an accelleration structire (BVH)
-		//    -> Position
-		//    -> wi (incoming direction)
-		//    -> Incoming radiance (Li)
-		//
-		// 2. Path Trace
-		// -> When sampling, replace BSDF with the new method, i.e.
-		//    -> Search for nearby vertices from 1.
-		//    -> Project wi into PSS
-		//    -> Invert BSDF sampling
-		//    -> Sample PSS
-		IntersectionData intersection = scene->traverse(r);
-		ShadingData shadingData = scene->calculateShadingData(intersection, r);
-
-		// Create an empty record for now, will fill in later in the function
-		ForwardPassRecord record;
-		record.position = (shadingData.t < FLT_MAX) ? shadingData.x : Vec4(0.f, 0.f, 0.f);
-		record.normal = (shadingData.t < FLT_MAX) ? shadingData.sNormal : Vec4(0.f, 0.f, 0.f);
-		record.wi = Vec4(0.f, 0.f, 0.f);
-		record.bsdfWeight = Colour(0.f, 0.f, 0.f);
-		record.directLighting = Colour(0.f, 0.f, 0.f);
-		record.emission = Colour(0.f, 0.f, 0.f);
-		record.misEmission = Colour(0.f, 0.f, 0.f);
-		record.storeRecord = false;
-
-		if (shadingData.t < FLT_MAX) {
-			if (shadingData.bsdf->isLight()) {
-				Colour emittedColour = shadingData.bsdf->emit(shadingData, shadingData.wo);
-				record.emission = emittedColour;
-				if (depth == 0 || previousSurfaceSpecular) {
-					record.misEmission = emittedColour;
-				} else {
-					// Evaluate MIS for Area Light
-					// Area Light PDF and PMF
-					float pmfLight = 1.f / scene->lights.size();
-					float pdfLight = 1.f / scene->triangles[intersection.ID].area;
-
-					// Handle degenerate PMF / PDF cases
-					if (pmfLight > 0.f && pdfLight > 0.f) {
-						float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
-						float distanceSquare = SQ(intersection.t);
-						if (cosThetaPrime > 0.f && distanceSquare > EPSILON) {
-							// Calculate pA of Light and BSDF for MIS
-							float pALight = pdfLight * pmfLight;
-							float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
-
-							// Handle degenerate pA
-							if (pALight >= 0.f && pABsdf >= 0.f) {
-								// Calculate Weight for MIS
-								float wind = weightPowerHeuristics(pABsdf, pALight);
-								record.misEmission = emittedColour * wind;
-							}
-						}
-					}
-				}
-				records.push_back(record);
-				return;
-			}
-			// Save the direct lighting (NEE) to the record
-			record.directLighting = computeDirect(shadingData, sampler);
-
-			// Apply Russian Roulette Starting at the ray depth 4
-			// Russian Roulette should kick in normally between at depth 3 to 5
-			float rrpRecord = 1.f;
-			if (depth > 3) {
-				// Using a fixed RRP because we don't have access to pathThroughput anymore...
-				float rrp = 0.7f;
-				if (sampler->next() < rrp) { rrpRecord = rrp; }
-				else { records.push_back(record); return; }
-			}
-
-			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
-			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
-			if (depth > 8) { records.push_back(record); return; }
-
-			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
-			float pdfBsdf = 0.f;
-			Colour fBsdf;
-			Vec4 wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
-			float cosTheta = fabs(Dot(wi, shadingData.sNormal));
-			if (pdfBsdf <= 0.f || cosTheta <= 0.f) { records.push_back(record); return; }
-			
-			// Now we update wi, Li, and storeRecord as we got the indirect radiance and it's bounce
-			bool isPreviousSurfaceSpecular = shadingData.bsdf->isPureSpecular();
-			
-			// Store the necessary records in the record structure
-			record.wi = wi;
-			record.bsdfWeight = (fBsdf * cosTheta) / (pdfBsdf * rrpRecord);
-			record.storeRecord = !isPreviousSurfaceSpecular;
-			records.push_back(record);
-
-			// Define indirect ray (for the next bounce) and recurse through the function
-			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
-			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
-			guidedPathRecursive(indirectRay, depth + 1, sampler, records, pdfBsdf, isPreviousSurfaceSpecular);
-			return;
-		}
-		Colour backgroundColour = scene->background->evaluate(r.dir);
-		record.emission = backgroundColour;
-		if (depth == 0 || previousSurfaceSpecular) {
-			record.misEmission = backgroundColour;
-		}
-		else if (backgroundColour.Lum() > 1e-8f) {
-			// Evaluate MIS for Environment Map
-			// Infinite Light PDF and PMF
-			float pmfLight = 1.f / scene->lights.size();
-			float pdfLight = scene->background->PDF(shadingData, r.dir);
-
-			// Handle degenerate PMF / PDF cases
-			if (pmfLight > 0.f && pdfLight > 0.f) {
+			if (pmfLight >= 0.f && pdfLight >= 0.f) {
 				// Calculate pA of Light and BSDF for MIS
 				float pALight = pmfLight * pdfLight;
 				float pABsdf = previousBsdfPdf;
@@ -801,7 +650,7 @@ public:
 			}
 
 			// Terminate when the ray depth exceeds 16 bounces, to avoid infinite recursion
-			if (depth > 15) return direct;
+			if (depth == 8) return direct;
 			
 			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
 			float pdfBsdf = 0.f;
@@ -890,7 +739,7 @@ public:
 		unsigned int total_tile_count = tiles_x * tiles_y;
 
 		// Are we in the learning phase or guiding phase?
-		bool isGuidingPhase = (this->getSPP() >= learningThreshold);
+		std::atomic<bool> isGuidingPhase = (getSPP() >= learningThreshold);
 
 		// Threads
 		for (unsigned int i = 0; i < numProcs; ++i) {
@@ -916,24 +765,20 @@ public:
 								float py = y + samplers[i].next();  // + 0.5f
 								Ray ray = scene->camera.generateRay(px, py);
 
-								// View Barycentrics / Shading Normals / Albedo / Direct Lighting / Path Trace
-								// TO:DO - View all via DearImGui
+								// View Barycentrics / Shading Normals / Albedo / Direct Lighting / Path Trace OR Path Guiding
 								//Colour col = viewBarycentrics(ray);
 								//Colour col = viewNormals(ray);
 								//Colour col = albedo(ray);
 								//Colour col = direct(ray, &samplers[i]);
-								
+
 								#if GUIDED_PATH
-								Colour col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords);
-								// Colour col = guidedPathNew(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, isGuidingPhase);
+								Colour col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, isGuidingPhase);
 								#else
 								Colour col = pathTrace(ray, &samplers[i]);
 								#endif
 
-								// Check for NaN/Inf values
+								// Check for NaN/Inf values and then Splat, Tonemap, and Draw to Pixel
 								if (!col.isValid()) continue;
-
-								// Splat, Tonemap, and Draw to Pixel
 								film->splat(px, py, col);
 								unsigned char r, g, b;
 								film->tonemap(x, y, r, g, b);
@@ -978,13 +823,20 @@ public:
 
 		if ((getSPP() == learningThreshold - 1)) {
 			// Build the BVH exactly once, after collecting cache estimates in the learning phase
-			std::cout << "Learning phase finished. Building BVH for cache estimates from " << globalCacheList.size() << " records." << std::endl;
+			std::cout << "Learning phase finished. Building BVH for cached path vertices..." << std::endl;
+			std::cout << "Total cached path vertices: " << globalCacheList.size() << std::endl;
 			cacheBVH = new PointBVHNode();
 			cacheBVH->buildPointBVHNode(std::move(globalCacheList));
 
 			// Clear Global Cache Estimates List
 			globalCacheList.clear();
 			globalCacheList.shrink_to_fit();
+			
+			// Clear the canvas to avoid confusion between learning and guiding phases
+			// film->clear() resets the SPP counter, so I implemented film->clearCanvas()
+			// which resets the canvas, and the accumulated SPP, while keeping the SPP counter intact for guiding phase
+			std::cout << "BVH built successfully. Entering guiding phase..." << std::endl;
+			film->clearCanvas();
 		}
 		#endif
 	}
