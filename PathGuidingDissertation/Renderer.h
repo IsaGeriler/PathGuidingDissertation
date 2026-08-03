@@ -517,7 +517,7 @@ public:
 				float radiusSq = radius * radius;
 				nearbyVertices.clear();
 				// Search for nearby vertices from 1.
-				cache->search(shadingData.x, radiusSq, nearbyVertices, 400);
+				cache->search(shadingData.x, radiusSq, nearbyVertices, 200);
 				if (nearbyVertices.empty()) {
 					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 				} else {
