@@ -776,7 +776,7 @@ public:
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
 
-// Plastic Model: BlinnBSDF
+// Using Torrance-Sparrow Microfacet Model with GGX Distribution for Plastic Material
 class PlasticBSDF : public BSDF {
 public:
 	// Attributes
@@ -790,126 +790,99 @@ public:
 		albedo = _albedo;
 		intIOR = _intIOR;
 		extIOR = _extIOR;
-		alpha = 1.62142f * sqrtf(roughness);
+		alpha = std::max(SQ(roughness), 0.001f);
 	}
 
 	// Methods
-	float alphaToPhongExponent() {
-		return (2.f / SQ(std::max(alpha, 0.001f))) - 2.f;
-	}
-
 	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
 		// Get outcoming direction
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
+		Vec4 wiLocal(0.f, 0.f, 0.f);
 
-		// Fresnel to compute diffuse or reflect surface
-		Vec4 wiLocal;
+		// Random numbers for sampling
 		float r1 = sampler->next();
 		float r2 = sampler->next();
+
+		// Fresnel to compute diffuse or reflect surface
+		float fresnel = ShadingHelper::fresnelDielectric((woLocal.z), intIOR, extIOR);
 		float selectProbability = sampler->next();
-		float fresnel = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
 		if (selectProbability < fresnel) {
 			// Glossy Part - Sample theta and phi from random variables for half vector
-			float e = alphaToPhongExponent();
-			float base = 1.f - r1;
-			float power = 1.f / (e + 1.f);
+			float alphaSq = alpha * alpha;
+			float theta = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
+			float phi = 2.f * M_PI * r2;
 
-			float thetaH = acosf(pow(base, power));
-			float phiH = 2.f * M_PI * r2;
+			// Converting this to GGX sampling for half vector
+			Vec4 hLocal = SphericalCoordinates::sphericalToWorld(theta, phi);
+			if (hLocal.lengthSquare() < EPSILON) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+			hLocal = hLocal.normalize();
 
-			// Get half vector
-			Vec4 hLocal = SphericalCoordinates::sphericalToWorld(thetaH, phiH).normalize();
-			
-			// Then reflect over half vector
+			// Flip if it's below the surface
+			if (woLocal.z <= 0.f) hLocal = -hLocal;
 			wiLocal = hLocal * 2.f * Dot(woLocal, hLocal) - woLocal;
-			if (wiLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+			if (wiLocal.z * woLocal.z <= 0.f || Dot(woLocal, hLocal) <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 		} else {
 			// Diffuse Part - Sample wi with cosine hemisphere
 			wiLocal = SamplingDistributions::cosineSampleHemisphere(r1, r2);
+			// Flip if it's below the surface
+			if (woLocal.z <= 0.f) wiLocal = -wiLocal;
 		}
-
 		Vec4 wi = shadingData.frame.toWorld(wiLocal);
-		reflectedColour = evaluate(shadingData, wi);
 		pdf = PDF(shadingData, wi);
+		if (pdf < EPSILON) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+		reflectedColour = evaluate(shadingData, wi);
 		return wi;
 	}
 
 	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
+		// TO:DO - Invert the sampling of the half vector for the glossy part and cosine hemisphere for the diffuse part
 		// TO:DO - Also invert the diffuse part if selectProbability < fresnel, but for now we will only invert the glossy part
-		Vec4 wiLocal = shadingData.frame.toLocal(wi);
-		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-
-		// Calculate half vector from wi and wo
-		Vec4 hLocal = (wiLocal + woLocal).normalize();
-
-		// Calculate theta and phi for half vector, and save phong exponent to a variable
-		float thetaH = SphericalCoordinates::sphericalTheta(hLocal);
-		float phiH = SphericalCoordinates::sphericalPhi(hLocal);
-		float e = alphaToPhongExponent();
-
-		// Invert theta and phi to get u and v
-		u = 1.f - powf(cos(thetaH), (e + 1.f));
-		v = phiH / (2.f * M_PI);
-		selectProbability = 1.f;  // TO:DO - Save Fresnel or Glossy Lobe Probability here...
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
 		// Calculate half vector from wi and wo
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-
-		// Guard case for cosine terms
-		if (wiLocal.z <= 0.f || woLocal.z <= 0.f) return Colour(0.f, 0.f, 0.f);
+		if (wiLocal.z * woLocal.z <= 0.f) return Colour(0.f, 0.f, 0.f);
 
 		// Get half vector and lenght check for half veector
 		Vec4 hLocal = wiLocal + woLocal;
 		if (hLocal.lengthSquare() < EPSILON) return Colour(0.f, 0.f, 0.f);
 		hLocal = hLocal.normalize();
+		if (Dot(woLocal, hLocal) <= 0.f) return Colour(0.f, 0.f, 0.f);
 
-		// Calculate ks and kd
-		float e = alphaToPhongExponent();
-		float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
-		float kd = 1.f - ks;
-		
-		// Blinn Normalization Factor (modified)
-		// https://renderwonk.com/publications/s2010-shading-course/gotanda/course_note_practical_implementation_at_triace.pdf
-		float norm = ((e + 2.f) * (e + 4.f)) / (8.f * M_PI * (std::powf(2.f, (-e * 0.5f)) + e));
-		float normLowerBound = (e + 6.f) / (8.f * M_PI);
-		float normUpperBound = (e + 8.f) / (8.f * M_PI);
+		// Using GGX Microfacet Model
+		float G = ShadingHelper::Gggx(wiLocal, woLocal, alpha);
+		float D = ShadingHelper::Dggx(hLocal, alpha);
+		float F = ShadingHelper::fresnelDielectric((Dot(woLocal, hLocal)), intIOR, extIOR);
 
-		// Clamp normalization factor
-		norm = std::min(std::max(normLowerBound, norm), normUpperBound);
-
-		// BSDF = kd * DiffuseBSDF + ks * GlossyBSDF
-		float glossyComponent = std::powf(std::max(hLocal.z, 0.f), e);
-		Colour diffuseBSDF = albedo->sample(shadingData.tu, shadingData.tv) * M_1_PI;
-		Colour glossyBSDF = Colour(1.f, 1.f, 1.f) * glossyComponent;
-		return (diffuseBSDF * kd) + (glossyBSDF * norm * ks);
+		float denom = (4.f * wiLocal.z * woLocal.z);
+		if (denom < EPSILON) return Colour(0.f, 0.f, 0.f);
+		float glossyBSDFComponent = (G * D * F) / denom;
+		Colour glossyBSDF = Colour(1.f, 1.f, 1.f) * glossyBSDFComponent;
+		Colour diffuseBSDF = albedo->sample(shadingData.tu, shadingData.tv) * M_1_PI * (1.f - F);
+		return glossyBSDF + diffuseBSDF;
 	}
 
 	float PDF(const ShadingData& shadingData, const Vec4& wi) {
 		// Calculate half vector from wi and wo
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-
-		// Guard case for cosine terms
-		if (wiLocal.z <= 0.f || woLocal.z <= 0.f) return 0.f;
+		if (wiLocal.z * woLocal.z <= 0.f) return 0.f;
 		
 		// Get half vector and lenght check for half veector
 		Vec4 hLocal = wiLocal + woLocal;
 		if (hLocal.lengthSquare() < EPSILON) return 0.f;
 		hLocal = hLocal.normalize();
+		if (Dot(woLocal, hLocal) <= 0.f) return 0.f;
+		
+		// Using GGX Microfacet Model
+		float D = ShadingHelper::Dggx(hLocal, alpha);
+		float F = ShadingHelper::fresnelDielectric((woLocal.z), intIOR, extIOR);
 
-		// Calculate ks and kd
-		float e = alphaToPhongExponent();
-		float ks = ShadingHelper::fresnelDielectric(fabs(woLocal.z), intIOR, extIOR);
-		float kd = 1.f - ks;
-
-		// PDF = kd * DiffusePDF + ks * GlossyPDF
-		float ph = ((e + 1.f) / (2.f * M_PI)) * std::powf(std::max(hLocal.z, 0.f), e);
-		float glossyPDF = (Dot(woLocal, hLocal) <= 0.f) ? 0.f : (ph / (4.f * Dot(woLocal, hLocal)));
-		float diffusePDF = SamplingDistributions::cosineHemispherePDF(wiLocal);
-		return (kd * diffusePDF) + (ks * glossyPDF);
+		float glossyPDF = F * ((D * (hLocal.z)) / (4.f * std::max((Dot(woLocal, hLocal)), EPSILON)));
+		float diffusePDF = (1.f - F) * SamplingDistributions::cosineHemispherePDF(wiLocal);
+		return glossyPDF + diffusePDF;
 	}
 
 	bool isPureSpecular() { return false; }

@@ -23,7 +23,7 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-#define GUIDED_PATH true
+#define GUIDED_PATH false
 
 struct ScreenTile {
 	// Default values for x, and y tiles, and tile size
@@ -282,7 +282,8 @@ public:
 	// Cached vertices will be stored in a BVH structure
 	PointBVHNode* cacheBVH;
 	std::vector<PathVertex> globalCacheList;
-	int maxSPP = 128;
+	// int maxSPP = 128;
+	int maxSPP = 8192;
 	int learningThreshold = maxSPP / 8;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
