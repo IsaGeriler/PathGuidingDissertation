@@ -23,7 +23,7 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-#define GUIDED_PATH false
+#define GUIDED_PATH true
 
 struct ScreenTile {
 	// Default values for x, and y tiles, and tile size
@@ -282,8 +282,8 @@ public:
 	// Cached vertices will be stored in a BVH structure
 	PointBVHNode* cacheBVH;
 	std::vector<PathVertex> globalCacheList;
-	// int maxSPP = 128;
-	int maxSPP = 8192;
+	int maxSPP = 512;
+	// int maxSPP = 8192;
 	int learningThreshold = maxSPP / 8;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
@@ -506,27 +506,28 @@ public:
 			Vec4 wi;
 
 			// --- NEW ---
-			// When sampling, replace BSDF with the new method
+			// -> When sampling, replace BSDF with the new method, i.e.
+			//    -> Search for nearby vertices from 1.
+			//    -> Project wi into PSS
+			//    -> Invert BSDF sampling
+			//    -> Sample PSS
 			if (isGuidingPhase && cache != nullptr) {
 				// Guiding Phase
-				// -> When sampling, replace BSDF with the new method, i.e.
-				//    -> Search for nearby vertices from 1.
-				//    -> Project wi into PSS
-				//    -> Invert BSDF sampling
-				//    -> Sample PSS
+				// Search for nearby vertices
 				float radius = 0.05f;
 				float radiusSq = radius * radius;
 				nearbyVertices.clear();
-				// Search for nearby vertices from 1.
 				cache->search(shadingData.x, radiusSq, nearbyVertices, 200);
-				if (nearbyVertices.empty()) {
+				if (nearbyVertices.size() < 20) {
 					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 				} else {
 					// Build the QTree fully before we start sampling
 					QTree qTree;
 					for (auto& vertex : nearbyVertices) {
-						// TO:DO - Check if a material is transmissive
-						if (fabs(Dot(vertex->wi, shadingData.sNormal)) < 0.f) continue;
+						if (!shadingData.bsdf->isPureSpecular()) {
+							if (Dot(vertex->wi, shadingData.sNormal) < 0.f) continue;
+						}
+						// BSDF inversion to get u, v, and u_lobe for QTree insertion
 						float u = 0.f, v = 0.f, u_lobe = 0.f;
 						shadingData.bsdf->invert(shadingData, vertex->wi, u, v, u_lobe);
 						qTree.insert(u, v, vertex->Li.Lum());
@@ -539,21 +540,22 @@ public:
 						// Do Guided Sampling
 						float r1 = sampler->next();
 						float r2 = sampler->next();
+						float u_lobe_out = sampler->next();
+						
 						float u_out = 0.f, v_out = 0.f;
-						// float u_lobe_out = sampler->next();
 						qTree.sample(r1, r2, u_out, v_out, qTree_pdf);
 						
 						// Then do BSDF sampling with the new numbers obtained
-						// We need to pass our newly obtained u, v, (plus later on lobe selection) in this sampler
 						GuidedPathSampler dummySampler;
-						dummySampler.set(u_out, v_out);  // dummySampler.set(u_out, v_out, u_lobe_out);
+						dummySampler.set(u_out, v_out, u_lobe_out);
 						wi = shadingData.bsdf->sample(shadingData, &dummySampler, fBsdf, pdfBsdf);
 					} else {
 						// Do Standart Sampling
 						wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
+
+						// What would be the pdf of the tree would be like if we were to invert BSDF?
 						float u_out = 0.f, v_out = 0.f, u_lobe = 0.f;
 						shadingData.bsdf->invert(shadingData, wi, u_out, v_out, u_lobe);
-						// What would be the pdf of the tree would be like?
 						qTree_pdf = qTree.pdf(u_out, v_out);
 					}
 					// finalPdf = c1 * pdfBsdf + c2 * pdfLi; where c1 = 0.5, and c2 = 0.5

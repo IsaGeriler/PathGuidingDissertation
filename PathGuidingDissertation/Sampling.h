@@ -50,16 +50,15 @@ public:
 // GuidedPathSampler to be included in our nex method, to pass (u,v)
 class GuidedPathSampler : public Sampler {
 private:
-	// add more random numbers when needed (for Plastic, Dielectric, Layered BSDFs etc.)
-	float u, v;
+	float u, v, selectProbability;
 	int called;
 public:
 	// Constructor
-	GuidedPathSampler() : u(0.f), v(0.f), called(0) {}
+	GuidedPathSampler() : u(0.f), v(0.f), selectProbability(0.f), called(0) {}
 
 	// Methods
-	void set(float _u, float _v) {
-		u = _u; v = _v;
+	void set(float _u, float _v, float _selectProbability) {
+		u = _u; v = _v; selectProbability = _selectProbability;
 		called = 0;
 	}
 
@@ -67,6 +66,7 @@ public:
 		float randomNumber = 0.f;
 		if (called == 0) randomNumber = u;
 		else if (called == 1) randomNumber = v;
+		else if (called == 2) randomNumber = selectProbability;
 		else randomNumber = 0.5f;
 
 		called++;
