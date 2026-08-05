@@ -23,7 +23,7 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-#define GUIDED_PATH true
+#define GUIDED_PATH false
 
 struct ScreenTile {
 	// Default values for x, and y tiles, and tile size
@@ -282,8 +282,8 @@ public:
 	// Cached vertices will be stored in a BVH structure
 	PointBVHNode* cacheBVH;
 	std::vector<PathVertex> globalCacheList;
-	int maxSPP = 512;
-	// int maxSPP = 8192;
+	// int maxSPP = 128;
+	int maxSPP = 8192;
 	int learningThreshold = maxSPP / 8;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
@@ -511,22 +511,20 @@ public:
 			//    -> Project wi into PSS
 			//    -> Invert BSDF sampling
 			//    -> Sample PSS
-			if (isGuidingPhase && cache != nullptr) {
+			bool isSpecular = shadingData.bsdf->isPureSpecular();
+			if (isGuidingPhase && cache != nullptr && !isSpecular) {
 				// Guiding Phase
 				// Search for nearby vertices
-				float radius = 0.05f;
+				float radius = 0.2f;
 				float radiusSq = radius * radius;
 				nearbyVertices.clear();
 				cache->search(shadingData.x, radiusSq, nearbyVertices, 200);
-				if (nearbyVertices.size() < 20) {
+				if (nearbyVertices.size() < 50) {
 					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 				} else {
 					// Build the QTree fully before we start sampling
 					QTree qTree;
 					for (auto& vertex : nearbyVertices) {
-						if (!shadingData.bsdf->isPureSpecular()) {
-							if (Dot(vertex->wi, shadingData.sNormal) < 0.f) continue;
-						}
 						// BSDF inversion to get u, v, and u_lobe for QTree insertion
 						float u = 0.f, v = 0.f, u_lobe = 0.f;
 						shadingData.bsdf->invert(shadingData, vertex->wi, u, v, u_lobe);
@@ -568,7 +566,6 @@ public:
 				// Sample BSDF as normal
 				wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 			}
-
 			float cosTheta = fabs(Dot(wi, shadingData.sNormal));
 			if (pdfBsdf <= 0.f || cosTheta <= 0.f) { records.push_back(record); return; }
 

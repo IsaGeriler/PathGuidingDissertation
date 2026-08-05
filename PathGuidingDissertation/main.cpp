@@ -19,14 +19,20 @@ static void runTest() {
 	Texture* testTexture = new Texture();
 	testTexture->loadDefault();
 
-	//std::string testMaterial = "Diffuse";
-	//BSDF* testBSDF = new DiffuseBSDF(testTexture);
+	std::string testMaterial = "Diffuse";
+	BSDF* testBSDF = new DiffuseBSDF(testTexture);
+
+	//std::string testMaterial = "Mirror";
+	//BSDF* testBSDF = new MirrorBSDF(testTexture);
+
+	//std::string testMaterial = "Glass";
+	//BSDF* testBSDF = new GlassBSDF(testTexture, 1.f, 1.5f);
 
 	//std::string testMaterial = "Oren-Nayar";
 	//BSDF* testBSDF = new OrenNayarBSDF(testTexture, 0.5f);
 
-	std::string testMaterial = "Conductor";
-	BSDF* testBSDF = new ConductorBSDF(testTexture, Colour(1.f, 0.6f, 1.5f), Colour(0.65f, 0.85f, 1.f), 0.5f);
+	//std::string testMaterial = "Conductor";
+	//BSDF* testBSDF = new ConductorBSDF(testTexture, Colour(1.f, 0.6f, 1.5f), Colour(0.65f, 0.85f, 1.f), 0.5f);
 
 	//std::string testMaterial = "Dielectric";
 	//BSDF* testBSDF = new DielectricBSDF(testTexture, 1.f, 1.5f, 0.5f);
@@ -42,14 +48,14 @@ static void runTest() {
 	testShadingData.frame.fromVector(testShadingData.sNormal);
 	
 	MTRandom sampler;
-	TestSampler testSampler;
+	GuidedPathSampler testSampler;
 
 	for (int i = 0; i < NUMBER_OF_TESTS; i++) {
 		// Sample BSDF
-		float u_in = sampler.next(), v_in = sampler.next();
+		float u_in = sampler.next(), v_in = sampler.next(), u_lobe = sampler.next();
 		float pdf = 0.f;
 		Colour col(0.f, 0.f, 0.f);
-		testSampler.set(u_in, v_in);
+		testSampler.set(u_in, v_in, u_lobe);
 		Vec4 wi = testShadingData.bsdf->sample(testShadingData, &testSampler, col, pdf);
 
 		// Invert Sample BSDF
@@ -81,7 +87,7 @@ int main(int argc, char* argv[]) {
 	runTest();
 
 	// Note - Test on these scenes
-	// Kitchen +, Bathroom +, Bathroom2 +, Bedroom +, Living-Room (1-2), Classroom,
+	// Kitchen +, Bathroom +, Bathroom2 +, Bedroom +, Living-Room (1+, 2+, 3), Classroom,
 	// and some directly lit scenes (e.g. Cornell Box +)
 
 	// -- Area Light Test Scenes --
@@ -91,8 +97,8 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/coffee";
 	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
-	std::string sceneName = "../Scenes/kitchen";
-	//std::string sceneName = "../Scenes/living-room-2";
+	//std::string sceneName = "../Scenes/kitchen";
+	std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
 	//std::string sceneName = "../Scenes/staircase";
 	//std::string sceneName = "../Scenes/staircase2";

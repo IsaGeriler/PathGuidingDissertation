@@ -496,6 +496,11 @@ public:
 		// Convert shadingData.wo to the local space
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
+		// Random numbers for sampling
+		float r1 = sampler->next();
+		float r2 = sampler->next();
+		float selectProbability = sampler->next();
+
 		// If alpha is less than epsilon, treat it as a mirror with fresnel
 		if (alpha < EPSILON) {
 			// Calculate fresnel to determine if we should reflect or refract
@@ -537,9 +542,6 @@ public:
 
 		// Sample half vector
 		float alphaSq = alpha * alpha;
-		float r1 = sampler->next();
-		float r2 = sampler->next();
-
 		float theta = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
 		float phi = 2.f * M_PI * r2;
 
@@ -547,8 +549,6 @@ public:
 
 		// Calculate Fresnel Term
 		float F = ShadingHelper::fresnelDielectric(Dot(woLocal, wmLocal), intIOR, extIOR);
-		float selectProbability = sampler->next();
-
 		if (selectProbability < F) {
 			// Reflect
 			Vec4 wiLocal = -woLocal + (wmLocal * 2 * Dot(wmLocal, woLocal));
@@ -836,10 +836,10 @@ public:
 		// Random numbers for sampling
 		float r1 = sampler->next();
 		float r2 = sampler->next();
+		float selectProbability = sampler->next();
 
 		// Fresnel to compute diffuse or reflect surface
 		float fresnel = ShadingHelper::fresnelDielectric((woLocal.z), intIOR, extIOR);
-		float selectProbability = sampler->next();
 		if (selectProbability < fresnel) {
 			// Glossy Part - Sample theta and phi from random variables for half vector
 			float alphaSq = alpha * alpha;

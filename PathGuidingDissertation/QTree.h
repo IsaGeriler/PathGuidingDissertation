@@ -70,6 +70,7 @@ private:
 
 		// If the child is null then create a new tree node
 		if (node->children[index] == nullptr) node->children[index] = allocateNode();
+		if (node->children[index] == nullptr) return;
 		
 		// Calculate the child's bounding box
 		QTreeBox childrenBox{};
@@ -107,7 +108,7 @@ private:
 		// Find the chosen children
 		float accumulatedProbability = 0.f;
 		float probability = 0.f;
-		int index = 0;
+		int index = -1;
 
 		for (int i = 0; i < 4; i++) {
 			if (node->children[i] == nullptr) continue;
@@ -124,6 +125,19 @@ private:
 			}
 			accumulatedProbability += childProbability;
 		}
+
+		if (index == -1) {
+			// Fallback: If no child was selected, choose the last non-null child
+			for (int i = 3; i >= 0; i--) {
+				if (node->children[i] != nullptr) {
+					index = i;
+					probability = node->children[i]->weight / sumWeights;
+					r1 = 0.5f;
+					break;
+				}
+			}
+		}
+
 		// Calculate mid-ponts
 		float midU = (currentBox.maxU + currentBox.minU) * 0.5f;
 		float midV = (currentBox.maxV + currentBox.minV) * 0.5f;
@@ -164,8 +178,11 @@ private:
 				sumWeights += node->children[i]->weight;
 			}
 		}
+		// Treat as leaf node to avoid zero divisions
+		if (sumWeights <= 0.f) return currentPdf;
+
 		// If the child node is null OR it's weight is 0, return 0
-		if (node->children[index] == nullptr || sumWeights <= 0.f) return 0.f;
+		if (node->children[index] == nullptr || node->children[index]->weight <= 0.f) return 0.f;
 		float probability = node->children[index]->weight / sumWeights;
 
 		// Calculate the child's bounding box
@@ -179,12 +196,6 @@ private:
 		// Update the currentPdf by multiplying with the probability of the chosen child and the area factor (4.f) since we are in a quadtree
 		currentPdf *= probability * 4.f;
 		return pdfRecursive(node->children[index], u, v, childrenBox, depth + 1, currentPdf);
-	}
-
-	void deleteRecursive(QTreeNode* node) {
-		if (node == nullptr) return;
-		for (int i = 0; i < 4; i++) deleteRecursive(node->children[i]);
-		delete node;
 	}
 public:
 	// Constructor & Destructor
