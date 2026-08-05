@@ -23,7 +23,7 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-#define GUIDED_PATH false
+#define GUIDED_PATH true
 
 struct ScreenTile {
 	// Default values for x, and y tiles, and tile size
@@ -177,7 +177,7 @@ private:
 
 	void searchNode(Vec4 hitPosition, float radiusSq, std::vector<PathVertex>& pathVertices, std::vector<const PathVertex*>& nearbyVertices, int maxVertices) {
 		// Return if the nearby vertices exceed the max vertices count
-		if (nearbyVertices.size() > maxVertices) return;
+		if (nearbyVertices.size() >= maxVertices) return;
 		
 		// Find the closest point in the AABB
 		Vec4 closestPoint;
@@ -191,7 +191,7 @@ private:
 
 		if (isLeaf()) {
 			for (int i = offset; i < offset + used; i++) {
-				if (nearbyVertices.size() > maxVertices) return;
+				if (nearbyVertices.size() >= maxVertices) return;
 				const PathVertex& vertex = pathVertices[i];
 				float distanceSq2 = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
 				if (distanceSq2 <= radiusSq) nearbyVertices.push_back(&vertex);
@@ -282,12 +282,13 @@ public:
 	// Cached vertices will be stored in a BVH structure
 	PointBVHNode* cacheBVH;
 	std::vector<PathVertex> globalCacheList;
-	// int maxSPP = 128;
-	int maxSPP = 8192;
+	int maxSPP = 128;
+	// int maxSPP = 8192;
 	int learningThreshold = maxSPP / 8;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
 	std::vector<std::vector<PathVertex>> perThreadPathVertexRecords;
+	QTree* perThreadQTrees;
 
 	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas) {
 		scene = _scene;
@@ -299,6 +300,7 @@ public:
 		numProcs = sysInfo.dwNumberOfProcessors;
 		threads = new std::thread*[numProcs];
 		samplers = new MTRandom[numProcs];
+		perThreadQTrees = new QTree[numProcs];
 		perThreadPathVertexRecords.resize(numProcs);
 		clear();
 	}
@@ -402,14 +404,15 @@ public:
 	}
 
 	// --- Path Guiding Algorithm Work Start ---
-	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVHNode* bvh, bool isGuidingPhase) {
+	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVHNode* sTree, QTree& dTree, bool isGuidingPhase) {
 		// --- 1. Forward Pass Phase ---
 		std::vector<ForwardPassRecord> records;
 		std::vector<const PathVertex*> nearbyVertices;
-		records.reserve(10);  // Max depth: 8, + 2 buffer space
+		records.reserve(10);          // Max depth: 8, + 2 buffer space
+		nearbyVertices.reserve(200);  // Pre-allocate max number of wanted vertices
 
 		// Generate the path vertices in the forward pass (only populate the vector)
-		generatePathRecursive(r, 0, sampler, records, bvh, isGuidingPhase, nearbyVertices);
+		generatePathRecursive(r, 0, sampler, records, sTree, dTree, isGuidingPhase, nearbyVertices);
 
 		// --- 2. Backpropagation Phase ---
 		// Store Each Path Vertex to the vector via Backpropagation
@@ -437,7 +440,7 @@ public:
 		return (!isGuidingPhase) ? guidingLi : pixelColour;
 	}
 
-	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVHNode* cache, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVHNode* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 
@@ -522,8 +525,6 @@ public:
 				if (nearbyVertices.size() < 50) {
 					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 				} else {
-					// Build the QTree fully before we start sampling
-					QTree qTree;
 					for (auto& vertex : nearbyVertices) {
 						// BSDF inversion to get u, v, and u_lobe for QTree insertion
 						float u = 0.f, v = 0.f, u_lobe = 0.f;
@@ -560,6 +561,12 @@ public:
 					// float qTree_solid_angle = qTree_pdf * pdfBsdf;
 					// pdfBsdf = (c1 * pdfBsdf) + (c2 * qTree_solid_angle);
 					pdfBsdf = pdfBsdf * (0.5f + 0.5f * qTree_pdf);
+					if (pdfBsdf <= 0.f || std::isnan(pdfBsdf) || std::isinf(pdfBsdf)) {
+						qTree.clear();
+						records.push_back(record);
+						return;
+					}
+					qTree.clear();
 				}
 			} else {
 				// Learning Phase
@@ -581,7 +588,7 @@ public:
 			// Define indirect ray (for the next bounce) and recurse through the function
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
 			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
-			generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, isGuidingPhase, nearbyVertices, pdfBsdf, isPreviousSurfaceSpecular);
+			generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, qTree, isGuidingPhase, nearbyVertices, pdfBsdf, isPreviousSurfaceSpecular);
 			return;
 		}
 		Colour backgroundColour = scene->background->evaluate(r.dir);
@@ -749,6 +756,7 @@ public:
 					// Lambda function to render tiles
 					unsigned int tile_id = 0;
 					std::vector<PathVertex>& currentThreadPathVertexRecords = perThreadPathVertexRecords[i];
+					QTree& currentThreadQTree = perThreadQTrees[i];
 
 					while ((tile_id = id.fetch_add(1)) < total_tile_count) {
 						// Initialize Screen Tile
@@ -772,7 +780,7 @@ public:
 								//Colour col = direct(ray, &samplers[i]);
 
 								#if GUIDED_PATH
-								Colour col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, isGuidingPhase);
+								Colour col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase);
 								#else
 								Colour col = pathTrace(ray, &samplers[i]);
 								#endif
@@ -804,7 +812,7 @@ public:
 			for (auto& pathVertexRecords : perThreadPathVertexRecords) {
 				total_size += pathVertexRecords.size();
 			}
-			globalCacheList.reserve(total_size);
+			globalCacheList.reserve(globalCacheList.size() + total_size);
 
 			// Carry the data obtained from tiled rendering to the global cache list
 			for (auto& recordsList : perThreadPathVertexRecords) {

@@ -1,59 +1,49 @@
 #pragma once
 
-#include <iostream>
-
-struct QTreeBox {
-	// Attributes
-	float minU; float maxU;
-	float minV; float maxV;
-
-	// Helper Area Method
-	float area() const { return ((maxU - minU) * (maxV - minV)); }
-};
+#include <vector>
 
 // uv-coordinates
 // Child Index 0: Bottom-Left  (0,0)
 // Child Index 1: Bottom-Right (1,0)
 // Child Index 2: Top-Left     (0,1)
 // Child Index 3: Top-Right    (1,1)
-struct QTreeNode {
+struct QTreeBox {
 	// Attributes
-	float weight = 0.f;
-	QTreeNode* children[4]{};
+	float minU; float maxU;
+	float minV; float maxV;
 
-	// Helper isLeaf Method
-	bool isLeaf() const {
-		return (children[0] == nullptr) && (children[1] == nullptr) && (children[2] == nullptr) && (children[3] == nullptr);
-	}
+	// Helper Function: Area
+	float area() const { return ((maxU - minU) * (maxV - minV)); }
+};
+
+struct QTreeNode {
+	float weight = 0.f;
+	int children[4] = {-1, -1, -1, -1};
 };
 
 // --- Directional-Tree Component of the Path Guiding ---
 class QTree {
 private:
 	// Attributes
-	QTreeNode nodePool[512];
-	QTreeNode* root;
-	int nextFreeNode = 0;
+	std::vector<QTreeNode> nodePool;
+	int rootIndex = -1;
 	int maxDepth;
 
 	// Private Methods
-	QTreeNode* allocateNode() {
-		// Pool exhausted, return null
-		if (nextFreeNode >= 512) return nullptr;
+	int allocateNode() {
+		// Add a new node to the pool (push_back() vs emplace_back())
+		nodePool.emplace_back(QTreeNode());
 
-		// Initialize and return the node
-		QTreeNode* node = &nodePool[nextFreeNode++];
-		node->weight = 0.f;
-		node->children[0] = node->children[1] = node->children[2] = node->children[3] = nullptr;
-		return node;
+		// Return the index of the newly added node
+		return (int)(nodePool.size() - 1);
 	}
 
-	void insertRecursive(QTreeNode* node, float u, float v, float luminance, QTreeBox currentBox, int depth) {
+	void insertRecursive(int nodeIndex, float u, float v, float luminance, QTreeBox currentBox, int depth) {
 		// Guard case for null node
-		if (node == nullptr) return;
+		if (nodeIndex == -1) return;
 
 		// Add luminance to node->totalWeight
-		node->weight += luminance;
+		nodePool[nodeIndex].weight += luminance;
 
 		// Terminate the recursion when we reach the max depth of the tree
 		if (depth == maxDepth) return;
@@ -69,9 +59,11 @@ private:
 		if (v >= midV) index += 2;
 
 		// If the child is null then create a new tree node
-		if (node->children[index] == nullptr) node->children[index] = allocateNode();
-		if (node->children[index] == nullptr) return;
-		
+		if (nodePool[nodeIndex].children[index] == -1) {
+			int newIndex = allocateNode();
+			nodePool[nodeIndex].children[index] = newIndex;
+		}
+
 		// Calculate the child's bounding box
 		QTreeBox childrenBox{};
 		childrenBox.minU = (index % 2 == 1) ? midU : currentBox.minU;
@@ -80,10 +72,10 @@ private:
 		childrenBox.maxV = (index >= 2) ? currentBox.maxV : midV;
 		
 		// Recursive call
-		insertRecursive(node->children[index], u, v, luminance, childrenBox, depth + 1);
+		insertRecursive(nodePool[nodeIndex].children[index], u, v, luminance, childrenBox, depth + 1);
 	}
 
-	void sampleRecursive(QTreeNode* node, float r1, float r2, QTreeBox currentBox, int depth, float& u, float& v, float& pdf, float currentPdf) {
+	void sampleRecursive(int nodeIndex, float r1, float r2, QTreeBox currentBox, int depth, float& u, float& v, float& pdf, float currentPdf) {
 		// Sample, and terminate the recursion when we are at the leaf node
 		if (depth == maxDepth) {
 			u = currentBox.minU + r1 * (currentBox.maxU - currentBox.minU);
@@ -91,13 +83,24 @@ private:
 			pdf = currentPdf;
 			return;
 		}
-		// Calculate the total weight of the children nodes
-		float sumWeights = 0.f;
-		for (int i = 0; i < 4; i++) {
-			if (node->children[i] != nullptr) {
-				sumWeights += node->children[i]->weight;
-			}
-		}
+
+		// Helper function to get weights to reduce clutter
+		auto getChildWeight = [&](int childIndex) -> float {
+			if (childIndex == -1) return 0.f;
+			return nodePool[childIndex].weight;
+		};
+
+		float w0 = getChildWeight(nodePool[nodeIndex].children[0]);  // Bottom-Left
+		float w1 = getChildWeight(nodePool[nodeIndex].children[1]);  // Bottom-Right
+		float w2 = getChildWeight(nodePool[nodeIndex].children[2]);  // Top-Left
+		float w3 = getChildWeight(nodePool[nodeIndex].children[3]);  // Top-Right
+		float sumWeights = w0 + w1 + w2 + w3;
+
+		// Marginal Decision for u and v
+		// U-Axis
+		float weightLeft = w0 + w2;   // Left children
+		float weightRight = w1 + w3;  // Right children
+
 		// Safety guard, treating as leaf node to avoid zero divisions
 		if (sumWeights <= 0.f) {
 			u = currentBox.minU + r1 * (currentBox.maxU - currentBox.minU);
@@ -105,37 +108,69 @@ private:
 			pdf = currentPdf;
 			return;
 		}
-		// Find the chosen children
-		float accumulatedProbability = 0.f;
-		float probability = 0.f;
-		int index = -1;
 
-		for (int i = 0; i < 4; i++) {
-			if (node->children[i] == nullptr) continue;
-			float childProbability = node->children[i]->weight / sumWeights;
-			if (r1 < accumulatedProbability + childProbability) {
-				index = i;
-				probability = childProbability;
+		float leftProbability = weightLeft / sumWeights;
+		bool isRight;
+		if (weightLeft <= 0.f) isRight = true;
+		else if (weightRight <= 0.f) isRight = false;
+		else isRight = (r1 >= leftProbability);
 
-				// Rescale r1 for reusability
-				// Maybe rescale r2 as well..? I don't know...
-				r1 = (r1 - accumulatedProbability) / probability;
-				// r2 = (r2 - accumulatedProbability) / probability;
-				break;
-			}
-			accumulatedProbability += childProbability;
+		if (!isRight) {
+			// Rescale r1 for the left child
+			r1 /= leftProbability;  
+		} else {
+			// Rescale r1 for the right child
+			float rightProbability = 1.f - leftProbability;
+			r1 = (r1 - leftProbability) / rightProbability;  
 		}
 
-		if (index == -1) {
-			// Fallback: If no child was selected, choose the last non-null child
-			for (int i = 3; i >= 0; i--) {
-				if (node->children[i] != nullptr) {
-					index = i;
-					probability = node->children[i]->weight / sumWeights;
-					r1 = 0.5f;
-					break;
-				}
-			}
+		// V-Axis
+		float weightBottom = !isRight ? w0 : w1;  // Bottom children
+		float weightTop = !isRight ? w2 : w3;     // Top children
+		float sumVertical = weightBottom + weightTop;
+
+		// Safety guard, treating as leaf node to avoid zero divisions
+		if (sumVertical <= 0.f) {
+			u = currentBox.minU + r1 * (currentBox.maxU - currentBox.minU);
+			v = currentBox.minV + r2 * (currentBox.maxV - currentBox.minV);
+			pdf = currentPdf;
+			return;
+		}
+
+		float bottomProbability = weightBottom / sumVertical;
+		bool isTop;
+		if (weightBottom <= 0.f) isTop = true;
+		else if (weightTop <= 0.f) isTop = false;
+		else isTop = (r2 >= bottomProbability);
+
+		if (!isTop) {
+			// Rescale r2 for the bottom child
+			r2 /= bottomProbability;
+		}
+		else {
+			// Rescale r2 for the top child
+			float topProbability = 1.f - bottomProbability;
+			r2 = (r2 - bottomProbability) / topProbability;
+		}
+
+		// Clamp r1 and r2 to [0, 1)
+		r1 = std::max(0.f, std::min(r1, 0.99999f));
+		r2 = std::max(0.f, std::min(r2, 0.99999f));
+
+		// Combine u and v decisions to find the child index
+		int index = 0;
+		if (isRight) index += 1;
+		if (isTop) index += 2;
+
+		// Calculate the probability
+		int childIndex = nodePool[nodeIndex].children[index];
+		float probability = getChildWeight(childIndex) / sumWeights;
+
+		if (childIndex == -1) {
+			u = currentBox.minU + r1 * (currentBox.maxU - currentBox.minU);
+			v = currentBox.minV + r2 * (currentBox.maxV - currentBox.minV);
+			pdf = currentPdf;
+			return;
 		}
 
 		// Calculate mid-ponts
@@ -152,12 +187,12 @@ private:
 		// Recursive call
 		// Update the currentPdf by multiplying with the probability of the chosen child and the area factor (4.f) since we are in a quadtree
 		currentPdf *= probability * 4.f;
-		sampleRecursive(node->children[index], r1, r2, childrenBox, depth + 1, u, v, pdf, currentPdf);
+		sampleRecursive(nodePool[nodeIndex].children[index], r1, r2, childrenBox, depth + 1, u, v, pdf, currentPdf);
 	}
 	
-	float pdfRecursive(QTreeNode* node, float u, float v, QTreeBox currentBox, int depth, float currentPdf) {
+	float pdfRecursive(int nodeIndex, float u, float v, QTreeBox currentBox, int depth, float currentPdf) {
 		// Handle null node case
-		if (node == nullptr) return 0.f;
+		if (nodeIndex == -1) return 0.f;
 
 		// Terminate the recursion when we reach the max depth of the tree
 		if (depth == maxDepth) return currentPdf;
@@ -174,16 +209,18 @@ private:
 
 		float sumWeights = 0.f;
 		for (int i = 0; i < 4; i++) {
-			if (node->children[i] != nullptr) {
-				sumWeights += node->children[i]->weight;
+			if (nodePool[nodeIndex].children[i] != -1) {
+				int currentChildIndex = nodePool[nodeIndex].children[i];
+				sumWeights += nodePool[currentChildIndex].weight;
 			}
 		}
 		// Treat as leaf node to avoid zero divisions
 		if (sumWeights <= 0.f) return currentPdf;
 
 		// If the child node is null OR it's weight is 0, return 0
-		if (node->children[index] == nullptr || node->children[index]->weight <= 0.f) return 0.f;
-		float probability = node->children[index]->weight / sumWeights;
+		int childIndex = nodePool[nodeIndex].children[index];
+		if (childIndex == -1 || nodePool[childIndex].weight <= 0.f) return 0.f;
+		float probability = nodePool[childIndex].weight / sumWeights;
 
 		// Calculate the child's bounding box
 		QTreeBox childrenBox{};
@@ -195,14 +232,18 @@ private:
 		// Recursive call
 		// Update the currentPdf by multiplying with the probability of the chosen child and the area factor (4.f) since we are in a quadtree
 		currentPdf *= probability * 4.f;
-		return pdfRecursive(node->children[index], u, v, childrenBox, depth + 1, currentPdf);
+		return pdfRecursive(nodePool[nodeIndex].children[index], u, v, childrenBox, depth + 1, currentPdf);
 	}
 public:
 	// Constructor & Destructor
-	QTree(int _maxDepth = 4) {
+	QTree(int _maxDepth) {
 		maxDepth = _maxDepth;
-		nextFreeNode = 0;
-		root = allocateNode();
+		rootIndex = allocateNode();
+	}
+
+	QTree() {
+		maxDepth = 4;
+		rootIndex = allocateNode();
 	}
 
 	// Methods
@@ -211,23 +252,28 @@ public:
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;
-		insertRecursive(root, u, v, luminance, rootBox, 0);
+		insertRecursive(rootIndex, u, v, luminance, rootBox, 0);
+	}
+
+	void clear() {
+		nodePool.clear();
+		rootIndex = allocateNode();
 	}
 
 	void sample(float r1, float r2, float& u, float& v, float& pdf) {
-		if (root->weight <= 0.f) { u = r1; v = r2; pdf = 1.f; return; }
+		if (nodePool[rootIndex].weight <= 0.f) { u = r1; v = r2; pdf = 1.f; return; }
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;
-		sampleRecursive(root, r1, r2, rootBox, 0, u, v, pdf, 1.f);
+		sampleRecursive(rootIndex, r1, r2, rootBox, 0, u, v, pdf, 1.f);
 	}
 
 	float pdf(float u, float v) {
-		if (root->weight <= 0.f) return 1.f;
+		if (nodePool[rootIndex].weight <= 0.f) return 1.f;
 		if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return 0.f;
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;
-		return pdfRecursive(root, u, v, rootBox, 0, 1.f);
+		return pdfRecursive(rootIndex, u, v, rootBox, 0, 1.f);
 	}
 };

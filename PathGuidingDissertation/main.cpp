@@ -1,15 +1,17 @@
 #define NOMINMAX
 
+#include <cassert>
 #include <cmath>
 #include <iostream>
 #include <unordered_map>
 
+#include "QTree.h"
 #include "Renderer.h"
 #include "SceneLoader.h"
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-static void runTest() {
+static void invertBSDFTest() {
 	// Add test codes here
 	// Testing BSDF Inversion (DiffuseBSDF & OrenNayarBSDF for now)
 	std::cout << "--- BSDF Inversion Test ---" << std::endl;
@@ -46,7 +48,7 @@ static void runTest() {
 	testShadingData.wo = Vec4(0.f, 1.f, 0.f);
 	testShadingData.bsdf = testBSDF;
 	testShadingData.frame.fromVector(testShadingData.sNormal);
-	
+
 	MTRandom sampler;
 	GuidedPathSampler testSampler;
 
@@ -82,6 +84,121 @@ static void runTest() {
 	std::cout << "---------------------------" << std::endl;
 }
 
+static void testPDFIntegration() {
+	// Assuming maxDepth is 4 for this test
+	QTree qtree(4);
+
+	// Populate the QTree with sample data
+	qtree.insert(0.1f, 0.1f, 100.f);
+	qtree.insert(0.9f, 0.9f, 50.f);
+	qtree.insert(0.5f, 0.1f, 10.f);
+
+	float integral = 0.f;
+
+	// maxDepth 4, the grid is 16 cells accross
+	int numCells = 16;
+	float cellSize = 1.f / numCells;
+	float cellArea = cellSize * cellSize;
+
+	// Iterate over every leaf's centre
+	for (int i = 0; i < numCells; ++i) {
+		for (int j = 0; j < numCells; ++j) {
+			// Get the centre of the cell and then do PDF * dx * dy
+			float u = (i + 0.5f) * cellSize;
+			float v = (j + 0.5f) * cellSize;
+			integral += qtree.pdf(u, v) * cellArea;
+		}
+	}
+	std::cout << "QTree PDF Integration Test: Integral = " << integral << std::endl;
+	assert(std::fabs(integral - 1.f) < 1e-5f && "PDF Integration Test Failed...");
+}
+
+static void testSamplePDFConsistency() {
+	// Populate the QTree with sample data
+	QTree qtree(3);
+	qtree.insert(0.2f, 0.2f, 10.f);
+
+	// Deterministic test values
+	float r1 = 0.123f;
+	float r2 = 0.456f;
+	float u, v, pdfSampled, pdfEvaluated;
+
+	// Sample from the QTree
+	qtree.sample(r1, r2, u, v, pdfSampled);
+	pdfEvaluated = qtree.pdf(u, v);
+
+	std::cout << "Sampled PDF: " << pdfSampled << ", Evaluated PDF: " << pdfEvaluated << std::endl;
+	assert(std::fabs(pdfSampled - pdfEvaluated) < 1e-4f && "Sample/PDF Consistency Test Failed...");
+}
+
+static void testNullSpace() {
+	// Populate the QTree with sample data
+	QTree qtree(2);
+	qtree.insert(0.1f, 0.1f, 10.f);
+
+	// Evaluate top-right corner
+	float pdfEvaluated = qtree.pdf(0.9f, 0.9f);
+	std::cout << "Evaluated PDF at (0.9, 0.9): " << pdfEvaluated << std::endl;
+	assert(pdfEvaluated == 0.f && "Null Space Test Failed...");
+}
+
+static void testBoundariesAndExtremes() {
+	// Populate the QTree with sample data
+	QTree qtree(4);
+	qtree.insert(0.f, 0.f, 10.f);
+	qtree.insert(0.9999f, 0.9999f, 10.f);
+	qtree.insert(1.f, 1.f, 10.f);
+	qtree.insert(0.5f, 0.5f, 0.f);
+	qtree.insert(0.5f, 0.5f, -5.f);
+
+	// Sample with extreme cases
+	float u, v, pdf;
+	qtree.sample(0.f, 0.f, u, v, pdf);
+	assert(!std::isnan(u) && !std::isnan(v) && !std::isnan(pdf));
+	std::cout << "u: " << u << ", v: " << v << ", pdf=" << pdf << std::endl;
+
+	qtree.sample(0.99999f, 0.99999f, u, v, pdf);
+	assert(!std::isnan(u) && !std::isnan(v) && !std::isnan(pdf));
+	std::cout << "u: " << u << ", v: " << v << ", pdf=" << pdf << std::endl;
+
+	// Test PDF at extreme cases
+	float pdfLow = qtree.pdf(0.f, 0.f);
+	float pdfHigh = qtree.pdf(0.9999f, 0.9999f);
+	std::cout << "pdfLow=" << pdfLow << ", pdfHigh=" << pdfHigh << std::endl;
+	assert(!std::isnan(pdfLow) && !std::isnan(pdfHigh));
+}
+
+void testMemoryAllocationStress() {
+	// Initialize a deep tree (2^8 = 65536 leaves)
+	QTree qtree(8);
+	MTRandom sampler;
+
+	// Insert 100000 random samples
+	for (int i = 0; i < 100000; i++) {
+		float u = sampler.next();
+		float v = sampler.next();
+		float luminance = (float)(rand() % 100) / 10.f;
+		qtree.insert(u, v, luminance);
+	}
+	float uOut, vOut, pdfOut;
+	qtree.sample(0.5f, 0.5f, uOut, vOut, pdfOut);
+	std::cout << "Memory Stress Test Has Been Successfull..." << std::endl;
+	assert(pdfOut > 0.f && "Memory Stress Test Failed");
+}
+
+// Run all the tests here
+static void runTest() {
+	// BSDF Inversion Test
+	invertBSDFTest();
+
+	// QTree Tests
+	testSamplePDFConsistency();
+	testPDFIntegration();
+	testNullSpace();
+	testBoundariesAndExtremes();
+	testMemoryAllocationStress();
+}
+
 int main(int argc, char* argv[]) {
 	// Run testing code first before rendering any stuff!
 	runTest();
@@ -97,8 +214,8 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/coffee";
 	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
-	//std::string sceneName = "../Scenes/kitchen";
-	std::string sceneName = "../Scenes/living-room-2";
+	std::string sceneName = "../Scenes/kitchen";
+	//std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
 	//std::string sceneName = "../Scenes/staircase";
 	//std::string sceneName = "../Scenes/staircase2";
