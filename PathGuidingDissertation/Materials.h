@@ -163,6 +163,7 @@ public:
 	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Convert wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
+		if (wiLocal.z <= 0.f) { u = -1.f; v = -1.f; selectProbability = 0.f; return; }
 
 		// Retrieve theta and phi from wiLocal
 		float theta = SphericalCoordinates::sphericalTheta(wiLocal);

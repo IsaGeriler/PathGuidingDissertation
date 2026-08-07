@@ -18,7 +18,7 @@ struct QTreeBox {
 
 struct QTreeNode {
 	float weight = 0.f;
-	int children[4] = {-1, -1, -1, -1};
+	int children[4] = { -1, -1, -1, -1 };
 };
 
 // --- Directional-Tree Component of the Path Guiding ---
@@ -146,8 +146,7 @@ private:
 		if (!isTop) {
 			// Rescale r2 for the bottom child
 			r2 /= bottomProbability;
-		}
-		else {
+		} else {
 			// Rescale r2 for the top child
 			float topProbability = 1.f - bottomProbability;
 			r2 = (r2 - bottomProbability) / topProbability;
@@ -242,13 +241,13 @@ public:
 	}
 
 	QTree() {
-		maxDepth = 4;
+		maxDepth = 3;
 		rootIndex = allocateNode();
 	}
 
 	// Methods
 	void insert(float u, float v, float luminance) {
-		if (luminance < 0 || u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return;
+		if (!(luminance > 0.f) || u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return;
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;

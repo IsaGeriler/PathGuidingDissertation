@@ -43,8 +43,8 @@ static void invertBSDFTest() {
 	//BSDF* testBSDF = new PlasticBSDF(testTexture, 1.f, 1.5f, 0.5f);
 
 	ShadingData testShadingData;
-	testShadingData.sNormal = Vec4(0.f, 1.f, 0.f);
-	testShadingData.gNormal = Vec4(0.f, 1.f, 0.f);
+	testShadingData.sNormal = Vec4(0.f, 0.f, 1.f);
+	testShadingData.gNormal = Vec4(0.f, 0.f, 1.f);
 	testShadingData.wo = Vec4(0.f, 1.f, 0.f);
 	testShadingData.bsdf = testBSDF;
 	testShadingData.frame.fromVector(testShadingData.sNormal);
@@ -204,8 +204,8 @@ int main(int argc, char* argv[]) {
 	runTest();
 
 	// Note - Test on these scenes
-	// Kitchen +, Bathroom +, Bathroom2 +, Bedroom +, Living-Room (1+, 2+, 3), Classroom,
-	// and some directly lit scenes (e.g. Cornell Box +)
+	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Bedroom +, Living-Room 2+
+	// Classroom, Sibenik, Dining Room, Living Room 1
 
 	// -- Area Light Test Scenes --
 	//std::string sceneName = "../Scenes/bathroom";

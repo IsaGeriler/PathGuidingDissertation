@@ -180,7 +180,6 @@ public:
 	unsigned int width;
 	unsigned int height;
 	int SPP;
-	int accumulatedSPP;
 	ImageFilter* filter;
 
 	void splat(const float x, const float y, const Colour& L) {
@@ -219,7 +218,7 @@ public:
 	// Return a tonemapped pixel at coordinates x, y
 	void tonemap(int x, int y, unsigned char& r, unsigned char& g, unsigned char& b, float exposure = 1.f, float LmaxWhite = 10.f) {
 		// Get input colour and apply exposure
-		float invSPP = (accumulatedSPP > 0) ? 1.f / static_cast<float>(accumulatedSPP) : 1.f;
+		float invSPP = (SPP > 0) ? 1.f / static_cast<float>(SPP) : 1.f;
 		Colour col = film[(y * width) + x] * invSPP * exposure;
 
 		// Get Input Luminance
@@ -254,22 +253,15 @@ public:
 	void clear() {
 		memset(film, 0, width * height * sizeof(Colour));
 		SPP = 0;
-		accumulatedSPP = 0;
-	}
-
-	void clearCanvas() {
-		memset(film, 0, width * height * sizeof(Colour));
-		accumulatedSPP = 0;
 	}
 
 	void incrementSPP() {
 		SPP++;
-		accumulatedSPP++;
 	}
 
 	void save(std::string filename) {
 		Colour* hdrpixels = new Colour[width * height];
-		float invSPP = (accumulatedSPP > 0) ? 1.f / static_cast<float>(accumulatedSPP) : 1.f;
+		float invSPP = (SPP > 0) ? 1.f / static_cast<float>(SPP) : 1.f;
 
 		for (unsigned int i = 0; i < (width * height); i++) {
 			hdrpixels[i] = film[i] * invSPP;
