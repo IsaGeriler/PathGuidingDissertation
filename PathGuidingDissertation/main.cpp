@@ -156,6 +156,26 @@ static void testPlasticBSDF(Texture* tex) {
 	}
 }
 
+static void testGlassBSDF(Texture* tex) {
+	float extIOR = 1.f;
+	float intIORList[] = { 1.33f, 1.5f };
+	std::string testName = "";
+
+	for (float intIOR : intIORList) {
+		BSDF* bsdf = new GlassBSDF(tex, intIOR, extIOR);
+		testName = "Glass (IOR: " + std::to_string(intIOR) + ")";
+		runInversionTestLoop(bsdf, testName);
+		delete bsdf;
+	}
+}
+
+static void testMirrorBSDF(Texture* tex) {
+	BSDF* bsdf = new MirrorBSDF(tex);
+	std::string testName = "Mirror";
+	runInversionTestLoop(bsdf, testName);
+	delete bsdf;
+}
+
 static void runAllBSDFInversionTests() {
 	std::cout << "========================================" << std::endl;
 	std::cout << "       START BSDF INVERSION TESTS!      " << std::endl;
@@ -170,8 +190,8 @@ static void runAllBSDFInversionTests() {
 	testConductorBSDF(dummyTexture);
 	testDielectricBSDF(dummyTexture);
 	testPlasticBSDF(dummyTexture);
-	// testGlassBSDF(dummyTexture);
-	// testMirrorBSDF(dummyTexture);
+	testGlassBSDF(dummyTexture);
+	testMirrorBSDF(dummyTexture);
 	// testLayeredBSDF(dummyTexture);
 	delete dummyTexture;
 

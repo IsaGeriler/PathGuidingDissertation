@@ -25,7 +25,7 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define GUIDED_PATH true
+#define GUIDED_PATH false
 #define DEBUG_GUIDED_PATH false
 
 // Enable NEE or not for Incoming Radiance (Li)

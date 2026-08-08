@@ -217,6 +217,11 @@ public:
 
 		// Guard case to prevent division by zero
 		if (fabsf(wrLocal.z) <= EPSILON) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+
+		// Generate random numbers (this is for BSDF Inversion and testing it)
+		float dummy_r1 = sampler->next();
+		float dummy_r2 = sampler->next();
+		float dummy_selectProbability = sampler->next();
 		
 		// Convert back to world space and return
 		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / wrLocal.z;  // BSDF = albedo / Dot(wr, n)
@@ -224,12 +229,9 @@ public:
 		return shadingData.frame.toWorld(wrLocal);
 	}
 
+	// MirrorBSDF will not be inverted as this is due to Dirac Delta distribution
 	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
-		// MirrorBSDF will not be inverted as this is due to Dirac Delta distribution
-		// Invert will return 0 for u, v, and selectProbability
-		u = 0.f;
-		v = 0.f;
-		selectProbability = 0.f;
+		u = 0.f; v = 0.f; selectProbability = 0.f;
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -410,8 +412,13 @@ public:
 		float eta = (cosThetaI < 0.f) ? (intIOR / extIOR) : (extIOR / intIOR);
 		if (cosThetaI < 0.f) cosThetaI = fabsf(cosThetaI);
 
+		// Generate random numbers (this is for BSDF Inversion and testing it)
+		float dummy_r1 = sampler->next();
+		float dummy_r2 = sampler->next();
+		float selectProbability = sampler->next();
+
 		// Generate a random number to decide reflect of refract
-		if (sampler->next() < fresnel) {
+		if (selectProbability < fresnel) {
 			// Reflect
 			Vec4 wrLocal(-woLocal.x, -woLocal.y, woLocal.z);
 			pdf = fresnel;
@@ -506,7 +513,7 @@ public:
 		if (alpha < EPSILON) {
 			// Calculate fresnel to determine if we should reflect or refract
 			float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
-			if (sampler->next() < fresnel) {
+			if (selectProbability < fresnel) {
 				// Reflect
 				Vec4 wiLocal(-woLocal.x, -woLocal.y, woLocal.z);
 				pdf = fresnel;
