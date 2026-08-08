@@ -25,17 +25,17 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define GUIDED_PATH false
+#define GUIDED_PATH true
 #define DEBUG_GUIDED_PATH false
 
 // Enable NEE or not for Incoming Radiance (Li)
 constexpr bool enableNEE = true;
 
-// Defensive Sampling & Mixture
+// Defensive Sampling & Mixture (50-50)
 static const int MAX_NEARBY_VERTICES = 800;
 static const int MIN_ACCEPTED_INSERTIONS = 800;
-static const float BSDF_FRACTION = 0.75f;
-static const float QTREE_FRACTION = 0.25f;
+static const float BSDF_FRACTION = 0.5f;
+static const float QTREE_FRACTION = 0.5f;
 static const float QTREE_MIX = 0.9f;
 static const float UNIFORM_MIX = 0.1f;
 // --- Constants for Path Guiding Algortihm End ---

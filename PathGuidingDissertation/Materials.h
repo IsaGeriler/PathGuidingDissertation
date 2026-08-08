@@ -600,9 +600,6 @@ public:
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
-		// When alpha < EPSILON, we treated this as GlassBSDF, have to find a way to store fresnel probability here...
-		if (alpha < EPSILON) { u = 0.f; v = 0.f; selectProbability = 0.f; return; }
-
 		// Save cosine terms
 		float cosThetaO = woLocal.z;
 		float cosThetaI = wiLocal.z;
@@ -610,6 +607,17 @@ public:
 		// Determine reflect according to PBRT
 		// https://pbr-book.org/4ed/Reflection_Models/Rough_Dielectric_BSDF
 		bool reflect = cosThetaI * cosThetaO > 0.f;
+
+		// When alpha < EPSILON, we treated this as GlassBSDF
+		if (alpha < EPSILON) {
+			float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
+			u = 0.f;
+			v = 0.f;
+			selectProbability = reflect ? (fresnel * 0.5f) : (fresnel + ((1.f - fresnel) * 0.5f));
+			return;
+		}
+
+		// Calculate eta
 		float eta_o = cosThetaO > 0.f ? extIOR : intIOR;
 		float eta_i = cosThetaI > 0.f ? extIOR : intIOR;
 		float eta = reflect ? 1.f : eta_i / eta_o;
