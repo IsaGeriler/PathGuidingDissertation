@@ -542,7 +542,7 @@ public:
 		}
 	}
 
-	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVHNode* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE = false) {
+	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVHNode* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
 		// --- 1. Forward Pass Phase ---
 		std::vector<ForwardPassRecord> records;
 		std::vector<const PathVertex*> nearbyVertices;
@@ -569,8 +569,7 @@ public:
 			}
 			// Update the incoming radiance so that Li-1 can use this previous Li
 			if (enableNEE) incomingRadiance = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * incomingRadiance);
-			else incomingRadiance = records[i].misEmission + (records[i].bsdfWeight * incomingRadiance);
-			// What we had before -> incomingRadiance = records[i].emission + (records[i].bsdfWeight * incomingRadiance);
+			else incomingRadiance = records[i].emission + (records[i].bsdfWeight * incomingRadiance);
 		}
 		if (!incomingRadiance.isValid()) return Colour(0.f, 0.f, 0.f);
 		return incomingRadiance;
