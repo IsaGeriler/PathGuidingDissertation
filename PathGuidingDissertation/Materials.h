@@ -183,16 +183,13 @@ public:
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
 		// Convert wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
-		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-		if (woLocal.z * wiLocal.z <= 0.f) return Colour(0.f, 0.f, 0.f);
+		if (wiLocal.z <= 0.f) return Colour(0.f, 0.f, 0.f);
 		return albedo->sample(shadingData.tu, shadingData.tv) * 0.318309886183790671538;
 	}
 
 	float PDF(const ShadingData& shadingData, const Vec4& wi) {
 		// Convert wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
-		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
-		if (woLocal.z * wiLocal.z <= 0.f) return 0.f;
 		return SamplingDistributions::cosineHemispherePDF(wiLocal);
 	}
 
@@ -261,7 +258,9 @@ public:
 		albedo = _albedo;
 		eta = _eta;
 		k = _k;
-		alpha = 1.62142f * sqrtf(roughness);
+		// Swapping alpha from engine default to Disney mapping
+		// alpha = 1.62142f * sqrtf(roughness);
+		alpha = std::max(SQ(roughness), 0.001f);
 	}
 
 	// Methods
@@ -300,16 +299,15 @@ public:
 	}
 
 	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
-		// If alpha is less than epsilon, treat it as a MirrorBSDF
-		if (alpha < EPSILON) {
-			u = 0.f;
-			v = 0.f;
-			selectProbability = 0.f;
-			return;
-		}
 		// Convert wo and wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
+
+		// Can sample only visible normals
+		if (wiLocal.z <= 0.f || woLocal.z <= 0.f) { u = -1.f; v = -1.f; selectProbability = 0.f; return; }
+
+		// If alpha is less than epsilon, treat it as a MirrorBSDF
+		if (alpha < EPSILON) { u = 0.f; v = 0.f; selectProbability = 0.f; return; }
 
 		// Obtain the half vector from wi and wo
 		Vec4 wmLocal = (wiLocal + woLocal).normalize();
@@ -489,7 +487,9 @@ public:
 		albedo = _albedo;
 		intIOR = _intIOR;
 		extIOR = _extIOR;
-		alpha = 1.62142f * sqrtf(roughness);
+		// Swapping alpha from engine default to Disney mapping
+		// alpha = 1.62142f * sqrtf(roughness);
+		alpha = std::max(SQ(roughness), 0.001f);
 	}
 
 	// Methods
@@ -501,8 +501,8 @@ public:
 		float r1 = sampler->next();
 		float r2 = sampler->next();
 		float selectProbability = sampler->next();
-
-		// If alpha is less than epsilon, treat it as a mirror with fresnel
+		
+		// When alpha < EPSILON, we treat this as GlassBSDF
 		if (alpha < EPSILON) {
 			// Calculate fresnel to determine if we should reflect or refract
 			float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
@@ -566,7 +566,7 @@ public:
 			float eta = (cosThetaI > 0.f) ? (extIOR / intIOR) : (intIOR / extIOR);
 			float etaSq = eta * eta;
 
-			float cosThetaISq = std::max(cosThetaI * cosThetaI, 1.f);
+			float cosThetaISq = std::max(cosThetaI * cosThetaI, 0.f);
 			float sinThetaISq = std::max(1.f - cosThetaISq, 0.f);
 			float sinThetaTSq = etaSq * sinThetaISq;
 
@@ -589,19 +589,36 @@ public:
 	}
 
 	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
-		// Treat this case as MirrorBSDF
-		if (alpha < EPSILON) {
-			u = 0.f;
-			v = 0.f;
-			selectProbability = 0.f;
-			return;
-		}
-		// Else invert the half vector sampling like ConductorBSDF
+		// Convert wi and wo to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
+		// When alpha < EPSILON, we treated this as GlassBSDF, have to find a way to store fresnel probability here...
+		if (alpha < EPSILON) { u = 0.f; v = 0.f; selectProbability = 0.f; return; }
+
+		// Save cosine terms
+		float cosThetaO = woLocal.z;
+		float cosThetaI = wiLocal.z;
+
+		// Determine reflect according to PBRT
+		// https://pbr-book.org/4ed/Reflection_Models/Rough_Dielectric_BSDF
+		bool reflect = cosThetaI * cosThetaO > 0.f;
+		float eta_o = cosThetaO > 0.f ? extIOR : intIOR;
+		float eta_i = cosThetaI > 0.f ? extIOR : intIOR;
+		float eta = reflect ? 1.f : eta_i / eta_o;
+
+		// Retrieve the half-vector
+		Vec4 wmLocal = wiLocal * eta + woLocal;;
+
+		// Can only sample from visible normals
+		if (cosThetaO == 0.f || cosThetaI == 0.f || wmLocal.lengthSquare() == 0.f) { u = -1.f; v = -1.f; selectProbability = 0.f; return; }
+		wmLocal = wmLocal.normalize();
+
+		// Face forward
+		if (wmLocal.z < 0.f) wmLocal = -wmLocal;
+
 		// thetaM and phiM are obtained from the half vector
-		Vec4 wmLocal = (wiLocal + woLocal).normalize();
+		float F = ShadingHelper::fresnelDielectric(Dot(woLocal, wmLocal), intIOR, extIOR);
 		float theta = SphericalCoordinates::sphericalTheta(wmLocal);
 		float phi = SphericalCoordinates::sphericalPhi(wmLocal);
 
@@ -616,10 +633,7 @@ public:
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-
-		float F = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
-		bool reflect = woLocal.z * wiLocal.z > 0.f;
-		selectProbability = reflect ? (F * 0.5f) : (F + ((1.f - F) * 0.5f));	
+		selectProbability = reflect ? (F * 0.5f) : (F + ((1.f - F) * 0.5f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -639,7 +653,7 @@ public:
 		bool reflect = cosThetaI * cosThetaO > 0.f;
 		float eta_o = cosThetaO > 0.f ? extIOR : intIOR;
 		float eta_i = cosThetaI > 0.f ? extIOR : intIOR;
-		float eta = eta_i / eta_o;
+		float eta = reflect ? 1.f : eta_i / eta_o;
 		
 		// Generalized half-vector
 		// Can only sample from visible normals
@@ -690,7 +704,7 @@ public:
 		bool reflect = cosThetaI * cosThetaO > 0.f;
 		float eta_o = cosThetaO > 0.f ? extIOR : intIOR;
 		float eta_i = cosThetaI > 0.f ? extIOR : intIOR;
-		float eta = eta_i / eta_o;
+		float eta = reflect ? 1.f : eta_i / eta_o;
 
 		// Generalized half-vector
 		// Can only sample from visible normals
@@ -825,6 +839,8 @@ public:
 		albedo = _albedo;
 		intIOR = _intIOR;
 		extIOR = _extIOR;
+		// Swapping alpha from engine default to Disney mapping
+		// alpha = 1.62142f * sqrtf(roughness);
 		alpha = std::max(SQ(roughness), 0.001f);
 	}
 
@@ -840,11 +856,12 @@ public:
 		float selectProbability = sampler->next();
 
 		// Fresnel to compute diffuse or reflect surface
-		float fresnel = ShadingHelper::fresnelDielectric((woLocal.z), intIOR, extIOR);
+		float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
 		if (selectProbability < fresnel) {
 			// Glossy Part - Sample theta and phi from random variables for half vector
 			float alphaSq = alpha * alpha;
-			float theta = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
+			float alphaSqMinusOne = alphaSq - 1.f;
+			float theta = acosf(sqrtf((1.f - r1) / (r1 * alphaSqMinusOne + 1.f)));
 			float phi = 2.f * M_PI * r2;
 
 			// Converting this to GGX sampling for half vector
@@ -874,17 +891,23 @@ public:
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
-		// Calculate Fresnel to determine if we are reflecting or refracting
-		float F = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
-
-		// Calculate the half vector
+		// Calculate the half vector and face it forward
 		Vec4 hLocal = (wiLocal + woLocal).normalize();
+		if (hLocal.z < 0.f) hLocal = -hLocal;
 
-		// Evaluate Distribution Function
+		// Calculate PDFs and the weights to determine if we gloss or diffuse
+		float F = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
+		float pdf_diffuse = SamplingDistributions::cosineHemispherePDF(wiLocal);
+
 		float D = ShadingHelper::Dggx(hLocal, alpha);
-		bool isGlossy = (D > 0.5f);
+		float pdf_glossy = D * (hLocal.z) / (4.f * std::max(Dot(woLocal, hLocal), EPSILON));
+
+		float w_glossy = F * pdf_glossy;
+		float w_diffuse = (1.f - F) * pdf_diffuse;
+		if (w_glossy + w_diffuse < EPSILON) { u = -1.f; v = -1.f; selectProbability = 0.f; }
 
 		// Invert the half vector sampling for GGX distribution
+		bool isGlossy = w_glossy > w_diffuse;
 		if (isGlossy) {
 			// Retrieve theta and phi from hLocal
 			float theta = SphericalCoordinates::sphericalTheta(hLocal);
@@ -913,7 +936,7 @@ public:
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		selectProbability = F + (1.f - F) * 0.5f;
+		selectProbability = F + ((1.f - F) * 0.5f);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {

@@ -47,9 +47,6 @@
     <ClInclude Include="MyMath.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Metrics.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="QTree.h">
       <Filter>Header Files</Filter>
     </ClInclude>

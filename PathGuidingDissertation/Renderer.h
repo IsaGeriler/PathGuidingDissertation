@@ -25,7 +25,7 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define GUIDED_PATH false
+#define GUIDED_PATH true
 #define DEBUG_GUIDED_PATH false
 
 // Enable NEE or not for Incoming Radiance (Li)
@@ -326,7 +326,7 @@ public:
 	std::vector<PathVertex> globalCacheList;
 	// Ground Truth: 8192/16384					(should really be an absurd number to eliminate variance)
 	// Testing SPPs: 128/256/512/1024/2048/4096 (render, and compare error metrics with the groung truth)
-	int maxSPP = 128; 
+	int maxSPP = 128;
 	int learningThreshold = maxSPP / 8;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
@@ -812,6 +812,15 @@ public:
 			// Store the necessary records in the record structure
 			record.wi = wi;
 			record.bsdfWeight = (fBsdf * cosTheta) / (pdfCombined * rrpRecord);
+
+			// Just a way to deal with Firefly Artifactings
+			float maxLuminance = 20.f;  // Should be somewhere between 10 and 50
+			float currentLuminance = record.bsdfWeight.Lum();
+
+			if (currentLuminance > maxLuminance) {
+				record.bsdfWeight = record.bsdfWeight * (maxLuminance / currentLuminance);
+			}
+
 			record.storeRecord = !isSpecular;
 			records.push_back(record);
 
@@ -1061,7 +1070,7 @@ public:
 
 			// Print the profiling report
 			std::cout << "\n=========================================\n";
-			std::cout << "\n    PATH GUIDING PROFILING REPORT      \n";
+			std::cout << "      PATH GUIDING PROFILING REPORT      \n";
 			std::cout << "=========================================\n";
 			std::cout << "Total Guided Path Bounces : " << totalGuidedPathBounces << std::endl;
 			std::cout << "Average BVH Search Time   : " << avgBVHTime << " ms / frame" << std::endl;

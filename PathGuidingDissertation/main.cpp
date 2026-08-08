@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <string>
 #include <unordered_map>
 
 #include "QTree.h"
@@ -11,82 +12,180 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-static void invertBSDFTest() {
-	// Add test codes here
-	// Testing BSDF Inversion (DiffuseBSDF & OrenNayarBSDF for now)
-	std::cout << "--- BSDF Inversion Test ---" << std::endl;
+// --- BSDF Inversion Tests ---
+static void runInversionTestLoop(BSDF* testBSDF, const std::string& testName) {
+	// Define the constants
 	const int NUMBER_OF_TESTS = 100000;
 	const float TEST_EPSILON = 1e-4f;
 
-	Texture* testTexture = new Texture();
-	testTexture->loadDefault();
-
-	std::string testMaterial = "Diffuse";
-	BSDF* testBSDF = new DiffuseBSDF(testTexture);
-
-	//std::string testMaterial = "Mirror";
-	//BSDF* testBSDF = new MirrorBSDF(testTexture);
-
-	//std::string testMaterial = "Glass";
-	//BSDF* testBSDF = new GlassBSDF(testTexture, 1.f, 1.5f);
-
-	//std::string testMaterial = "Oren-Nayar";
-	//BSDF* testBSDF = new OrenNayarBSDF(testTexture, 0.5f);
-
-	//std::string testMaterial = "Conductor";
-	//BSDF* testBSDF = new ConductorBSDF(testTexture, Colour(1.f, 0.6f, 1.5f), Colour(0.65f, 0.85f, 1.f), 0.5f);
-
-	//std::string testMaterial = "Dielectric";
-	//BSDF* testBSDF = new DielectricBSDF(testTexture, 1.f, 1.5f, 0.5f);
-
-	//std::string testMaterial = "Plastic";
-	//BSDF* testBSDF = new PlasticBSDF(testTexture, 1.f, 1.5f, 0.5f);
-
-	ShadingData testShadingData;
-	testShadingData.sNormal = Vec4(0.f, 0.f, 1.f);
-	testShadingData.gNormal = Vec4(0.f, 0.f, 1.f);
-	testShadingData.wo = Vec4(0.f, 1.f, 0.f);
-	testShadingData.bsdf = testBSDF;
-	testShadingData.frame.fromVector(testShadingData.sNormal);
-
+	// Create both uniform and guided sampler
 	MTRandom sampler;
 	GuidedPathSampler testSampler;
 
+	// Keep track of how many tests have we successfully passed
+	int passedTestCount = 0;
+
+	// Run tests
 	for (int i = 0; i < NUMBER_OF_TESTS; i++) {
-		// Sample BSDF
+		// Randomly sample wo for test cases
+		float r1 = sampler.next();
+		float r2 = sampler.next();
+
+		// Cosine hemisphere sampling
+		Vec4 woLocal = SamplingDistributions::cosineSampleHemisphere(r1, r2);
+
+		// Set up a dummy shading data
+		ShadingData testShadingData;
+		testShadingData.sNormal = Vec4(0.f, 0.f, 1.f);
+		testShadingData.gNormal = Vec4(0.f, 0.f, 1.f);
+		testShadingData.bsdf = testBSDF;
+		testShadingData.frame.fromVector(testShadingData.sNormal);
+		testShadingData.wo = testShadingData.frame.toWorld(woLocal);
+
+		// Generate random u, v, u_lobe
 		float u_in = sampler.next(), v_in = sampler.next(), u_lobe = sampler.next();
 		float pdf = 0.f;
 		Colour col(0.f, 0.f, 0.f);
 		testSampler.set(u_in, v_in, u_lobe);
+
+		// Sample BSDF
 		Vec4 wi = testShadingData.bsdf->sample(testShadingData, &testSampler, col, pdf);
 
-		// Invert Sample BSDF
+		// Degenerate case - Invalid PDF
+		// e.g. ConductorBSDF returns 0 if it tries to sample non-visible normals
+		if (pdf <= 0.f) continue;
+
+		// Invert BSDF
 		float u_out = 0.f, v_out = 0.f, sampleProbability = 0.f;
 		testShadingData.bsdf->invert(testShadingData, wi, u_out, v_out, sampleProbability);
+		testSampler.set(u_out, v_out, sampleProbability);
 
-		if (fabs(v_in - 0.f) < TEST_EPSILON && fabs(v_out - 1.f) < TEST_EPSILON) v_out = 0.f;
-		if (fabs(v_out - 0.f) < TEST_EPSILON && fabs(v_in - 1.f) < TEST_EPSILON) v_in = 0.f;
+		float pdfReconstructed = 0.f;
+		Colour colourReconstructed(0.f, 0.f, 0.f);
+		Vec4 wiReconstructed = testShadingData.bsdf->sample(testShadingData, &testSampler, colourReconstructed, pdfReconstructed);
 
-		// Assertions for Debug Mode
-		float u_diff = fabs(u_in - u_out);
-		float v_diff = fabs(v_in - v_out);
-
-		if (u_diff > TEST_EPSILON || v_diff > TEST_EPSILON) {
-			std::cerr << "INVERSION TEST FAILED!" << std::endl;
+		float dotDifference = 1.f - Dot(wi.normalize(), wiReconstructed.normalize());
+		if (dotDifference > TEST_EPSILON || std::isnan(dotDifference)) {
+			std::cerr << "\n[FAILED] " << testName << std::endl;
 			std::cerr << "INPUT UV: u=" << u_in << ", v=" << v_in << std::endl;
 			std::cerr << "OUTPUT UV: u=" << u_out << ", v=" << v_out << std::endl;
-			std::cerr << "DIFFERENCE UV: u=" << u_diff << ", v=" << v_diff << std::endl;
-			std::cerr << "SAMPLED WI: wi=<" << wi.x << "," << wi.y << "," << wi.z << ">" << std::endl;
-			assert(false && "BSDF Inversion Test Failed...");
+			std::cerr << "ORIGINAL WI: wi=<" << wi.x << ", " << wi.y << ", " << wi.z << ">" << std::endl;
+			std::cerr << "RECONSTRUCTED WI: wi=<" << wiReconstructed.x << ", " << wiReconstructed.y << ", " << wiReconstructed.z << ">" << std::endl;
+			assert(false && "BSDF Inversion Test Failed!");
 		}
+		passedTestCount++;
 	}
-	std::cout << "PASSED: " << NUMBER_OF_TESTS << "/" << NUMBER_OF_TESTS << " " << testMaterial << "BSDF INVERSION TESTS!" << std::endl;
-	std::cout << "---------------------------" << std::endl;
+	std::cout << "[PASSED] " << testName << " (" << passedTestCount << " valid samples)" << std::endl;
 }
 
+static void testDiffuseBSDF(Texture* tex) {
+	BSDF* bsdf = new DiffuseBSDF(tex);
+	std::string testName = "Diffuse";
+	runInversionTestLoop(bsdf, testName);
+	delete bsdf;
+}
+
+static void testOrenNayarBSDF(Texture* tex) {
+	float roughnessList[] = { 0.1f, 0.5f, 0.9f };
+	std::string testName = "";
+
+	for (float roughness : roughnessList) {
+		BSDF* bsdf = new OrenNayarBSDF(tex, roughness);
+		testName = "Oren-Nayar (Roughness: " + std::to_string(roughness) + ")";
+		runInversionTestLoop(bsdf, testName);
+		delete bsdf;
+	}
+}
+
+static void testConductorBSDF(Texture* tex) {
+	// Gold eta and k estimations
+	Colour etaGold(0.14f, 0.37f, 1.44f);
+	Colour kGold(3.18f, 2.61f, 1.9f);
+
+	// Copper eta and k estimations
+	Colour etaCopper(0.24f, 0.93f, 1.1f);
+	Colour kCopper(3.11f, 2.61f, 2.42f);
+
+	float roughnessList[] = { 0.1f, 0.6f };
+	std::string testName = "";
+
+	for (float roughness : roughnessList) {
+		// Gold ConductorBSDF
+		BSDF* goldBSDF = new ConductorBSDF(tex, etaGold, kGold, roughness);
+		testName = "Conductor - Gold   (Roughness: " + std::to_string(roughness) + ")";
+		runInversionTestLoop(goldBSDF, testName);
+		delete goldBSDF;
+
+		// Copper ConductorBSDF
+		BSDF* copperBSDF = new ConductorBSDF(tex, etaCopper, kCopper, roughness);
+		testName = "Conductor - Copper (Roughness: " + std::to_string(roughness) + ")";
+		runInversionTestLoop(copperBSDF, testName);
+		delete copperBSDF;
+	}
+}
+
+static void testDielectricBSDF(Texture* tex) {
+	float extIOR = 1.f;
+	float intIORList[] = { 1.33f, 1.5f };
+	float roughnessList[] = { 0.05f, 0.4f, 0.8f };
+	std::string testName = "";
+
+	for (float intIOR : intIORList) {
+		for (float roughness : roughnessList) {
+			BSDF* bsdf = new DielectricBSDF(tex, intIOR, extIOR, roughness);
+			testName = "Dielectric (IOR: " + std::to_string(intIOR) + ", Roughness: " + std::to_string(roughness) + ")";
+			runInversionTestLoop(bsdf, testName);
+			delete bsdf;
+		}
+	}
+}
+
+static void testPlasticBSDF(Texture* tex) {
+	float extIOR = 1.f;
+	float intIORList[] = { 1.33f, 1.5f };
+	float roughnessList[] = { 0.05f, 0.4f, 0.8f };
+	std::string testName = "";
+
+	for (float intIOR : intIORList) {
+		for (float roughness : roughnessList) {
+			BSDF* bsdf = new PlasticBSDF(tex, intIOR, extIOR, roughness);
+			testName = "Plastic (IOR: " + std::to_string(intIOR) + ", Roughness: " + std::to_string(roughness) + ")";
+			runInversionTestLoop(bsdf, testName);
+			delete bsdf;
+		}
+	}
+}
+
+static void runAllBSDFInversionTests() {
+	std::cout << "========================================" << std::endl;
+	std::cout << "       START BSDF INVERSION TESTS!      " << std::endl;
+	std::cout << "========================================" << std::endl;
+
+	Texture* dummyTexture = new Texture();
+	dummyTexture->loadDefault();
+
+	// Call BSDF Inversions
+	testDiffuseBSDF(dummyTexture);
+	testOrenNayarBSDF(dummyTexture);
+	testConductorBSDF(dummyTexture);
+	testDielectricBSDF(dummyTexture);
+	testPlasticBSDF(dummyTexture);
+	// testGlassBSDF(dummyTexture);
+	// testMirrorBSDF(dummyTexture);
+	// testLayeredBSDF(dummyTexture);
+	delete dummyTexture;
+
+	std::cout << "========================================" << std::endl;
+	std::cout << "    ALL BSDF INVERSION TESTS PASSED!    " << std::endl;
+	std::cout << "========================================" << std::endl;
+}
+// --- BSDF Inversion Tests End ---
+
+// --- QTree Tests ---
 static void testPDFIntegration() {
 	// Assuming maxDepth is 4 for this test
 	QTree qtree(4);
+	// FlatQTreeGrid qtree(4);
 
 	// Populate the QTree with sample data
 	qtree.insert(0.1f, 0.1f, 100.f);
@@ -116,6 +215,7 @@ static void testPDFIntegration() {
 static void testSamplePDFConsistency() {
 	// Populate the QTree with sample data
 	QTree qtree(3);
+	// FlatQTreeGrid qtree(3);
 	qtree.insert(0.2f, 0.2f, 10.f);
 
 	// Deterministic test values
@@ -134,6 +234,7 @@ static void testSamplePDFConsistency() {
 static void testNullSpace() {
 	// Populate the QTree with sample data
 	QTree qtree(2);
+	// FlatQTreeGrid qtree(2);
 	qtree.insert(0.1f, 0.1f, 10.f);
 
 	// Evaluate top-right corner
@@ -145,6 +246,7 @@ static void testNullSpace() {
 static void testBoundariesAndExtremes() {
 	// Populate the QTree with sample data
 	QTree qtree(4);
+	// FlatQTreeGrid qtree(4);
 	qtree.insert(0.f, 0.f, 10.f);
 	qtree.insert(0.9999f, 0.9999f, 10.f);
 	qtree.insert(1.f, 1.f, 10.f);
@@ -171,6 +273,7 @@ static void testBoundariesAndExtremes() {
 void testMemoryAllocationStress() {
 	// Initialize a deep tree (2^8 = 65536 leaves)
 	QTree qtree(8);
+	// FlatQTreeGrid qtree(8);
 	MTRandom sampler;
 
 	// Insert 100000 random samples
@@ -185,11 +288,12 @@ void testMemoryAllocationStress() {
 	std::cout << "Memory Stress Test Has Been Successfull..." << std::endl;
 	assert(pdfOut > 0.f && "Memory Stress Test Failed");
 }
+// --- QTree Tests End ---
 
 // Run all the tests here
 static void runTest() {
 	// BSDF Inversion Test
-	invertBSDFTest();
+	runAllBSDFInversionTests();
 
 	// QTree Tests
 	testSamplePDFConsistency();

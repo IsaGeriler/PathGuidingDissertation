@@ -150,7 +150,6 @@
     <ClInclude Include="Imaging.h" />
     <ClInclude Include="Lights.h" />
     <ClInclude Include="Materials.h" />
-    <ClInclude Include="Metrics.h" />
     <ClInclude Include="MyMath.h" />
     <ClInclude Include="QTree.h" />
     <ClInclude Include="Renderer.h" />
