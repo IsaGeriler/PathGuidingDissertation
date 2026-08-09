@@ -253,7 +253,7 @@ private:
 	}
 
 	// Umm... will try to implement a kNN search by using max heap instead of radius based search
-	void kNNSearchNode(Vec4 hitPosition, float& dynamicRadiusSq, std::vector<PathVertex>& pathVertices, std::priority_queue<NearestPathVertex>& maxHeap) {
+	void kNNSearchNode(Vec4 hitPosition, float& dynamicRadiusSq, std::vector<PathVertex>& pathVertices, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
 		// We are in the leaf node of the list, can search now
 		if (isLeaf()) {
 			for (int i = offset; i < offset + used; i++) {
@@ -262,11 +262,11 @@ private:
 				if (distanceSq <= dynamicRadiusSq) {
 					// Heap isn't full
 					NearestPathVertex nearestVertex{ distanceSq, &vertex };
-					if (maxHeap.size() < MAX_NEARBY_VERTICES) {
+					if (maxHeap.size() < k) {
 						// Push the new nearest vertex in the heap
 						maxHeap.push(nearestVertex);
 						// Adjust the radius if the heap is full
-						if (maxHeap.size() == MAX_NEARBY_VERTICES) dynamicRadiusSq = maxHeap.top().distanceSq;
+						if (maxHeap.size() == k) dynamicRadiusSq = maxHeap.top().distanceSq;
 					}
 					// Heap is full
 					else {
@@ -282,30 +282,34 @@ private:
 			return;
 		}
 
-		// We are not in the leaf
-		// Calculate left child distance
-		Vec4 leftClosestPoint;
-		leftClosestPoint.x = std::max(std::min(hitPosition.x, l->bounds.max.x), l->bounds.min.x);
-		leftClosestPoint.y = std::max(std::min(hitPosition.y, l->bounds.max.y), l->bounds.min.y);
-		leftClosestPoint.z = std::max(std::min(hitPosition.z, l->bounds.max.z), l->bounds.min.z);
-		float distanceSqLeftChild = (SQ(leftClosestPoint.x - hitPosition.x) + SQ(leftClosestPoint.y - hitPosition.y) + SQ(leftClosestPoint.z - hitPosition.z));
+		// We are not in the leaf, calculate left and right child distance
+		float distanceSqLeftChild = FLT_MAX;
+		float distanceSqRightChild = FLT_MAX;
+		if (l != nullptr) {
+			Vec4 leftClosestPoint;
+			leftClosestPoint.x = std::max(std::min(hitPosition.x, l->bounds.max.x), l->bounds.min.x);
+			leftClosestPoint.y = std::max(std::min(hitPosition.y, l->bounds.max.y), l->bounds.min.y);
+			leftClosestPoint.z = std::max(std::min(hitPosition.z, l->bounds.max.z), l->bounds.min.z);
+			distanceSqLeftChild = (SQ(leftClosestPoint.x - hitPosition.x) + SQ(leftClosestPoint.y - hitPosition.y) + SQ(leftClosestPoint.z - hitPosition.z));
+		}
 
-		// Calculate right child distance
-		Vec4 rightClosestPoint;
-		rightClosestPoint.x = std::max(std::min(hitPosition.x, r->bounds.max.x), r->bounds.min.x);
-		rightClosestPoint.y = std::max(std::min(hitPosition.y, r->bounds.max.y), r->bounds.min.y);
-		rightClosestPoint.z = std::max(std::min(hitPosition.z, r->bounds.max.z), r->bounds.min.z);
-		float distanceSqRightChild = (SQ(rightClosestPoint.x - hitPosition.x) + SQ(rightClosestPoint.y - hitPosition.y) + SQ(rightClosestPoint.z - hitPosition.z));
+		if (r != nullptr) {
+			Vec4 rightClosestPoint;
+			rightClosestPoint.x = std::max(std::min(hitPosition.x, r->bounds.max.x), r->bounds.min.x);
+			rightClosestPoint.y = std::max(std::min(hitPosition.y, r->bounds.max.y), r->bounds.min.y);
+			rightClosestPoint.z = std::max(std::min(hitPosition.z, r->bounds.max.z), r->bounds.min.z);
+			distanceSqRightChild = (SQ(rightClosestPoint.x - hitPosition.x) + SQ(rightClosestPoint.y - hitPosition.y) + SQ(rightClosestPoint.z - hitPosition.z));
+		}
 		
 		// Branch to decide which child is the closest, and what order to traverse
 		if (distanceSqLeftChild < distanceSqRightChild) {
 			// Left Child is more closer, traverse left first and then right
-			if (l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) l->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap);
-			if (r != nullptr && distanceSqRightChild <= dynamicRadiusSq) r->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap);
+			if (l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) l->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap, k);
+			if (r != nullptr && distanceSqRightChild <= dynamicRadiusSq) r->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap, k);
 		} else {
 			// Right Child is more closer, traverse right first and then left
-			if (r != nullptr && distanceSqRightChild <= dynamicRadiusSq) r->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap);
-			if (l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) l->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap);
+			if (r != nullptr && distanceSqRightChild <= dynamicRadiusSq) r->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap, k);
+			if (l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) l->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap, k);
 		}
 	}
 public:
@@ -374,9 +378,9 @@ public:
 		searchNode(hitPosition, radiusSq, pathVertexRecords, nearbyVertices);
 	}
 
-	void kNNSearch(Vec4 hitPosition, float dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap) {
+	void kNNSearch(Vec4 hitPosition, float dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
 		// Start the kNN search from the root
-		kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertexRecords, maxHeap);
+		kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertexRecords, maxHeap, k);
 	}
 };
 // --- Spatial-Tree Component to Store PathVertex Caches End ---
@@ -725,7 +729,7 @@ public:
 				// BVH Nearest Path Vertices Search will be timed inside this scope
 				{
 					Timer bvhSearchTimer(stats.bvhSearchTimeMs);
-					cache->kNNSearch(shadingData.x, radiusSq, maxHeap);
+					cache->kNNSearch(shadingData.x, radiusSq, maxHeap, MAX_NEARBY_VERTICES);
 				}
 
 				while (!maxHeap.empty()) {
