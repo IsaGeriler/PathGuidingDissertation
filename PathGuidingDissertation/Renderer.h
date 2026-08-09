@@ -8,7 +8,9 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <queue>
 #include <ratio>
+#include <random>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -26,14 +28,15 @@
 
 // --- Constants for Path Guiding Algortihm ---
 #define GUIDED_PATH true
+#define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
 
 // Enable NEE or not for Incoming Radiance (Li)
 constexpr bool enableNEE = true;
 
 // Defensive Sampling & Mixture (50-50)
-static const int MAX_NEARBY_VERTICES = 800;
-static const int MIN_ACCEPTED_INSERTIONS = 800;
+static const int MAX_NEARBY_VERTICES = 100;
+static const int MIN_ACCEPTED_INSERTIONS = 50;
 static const float BSDF_FRACTION = 0.5f;
 static const float QTREE_FRACTION = 0.5f;
 static const float QTREE_MIX = 0.9f;
@@ -75,6 +78,14 @@ struct ForwardPassRecord {
 	bool storeRecord = false;  // Do not store if previous surface is pure specular
 };
 
+struct NearestPathVertex {
+	// Creating this struct for the max-heap part of my kNN-search
+	float distanceSq;
+	PathVertex* vertex;
+	bool operator<(const NearestPathVertex& otherVertex) const { return distanceSq < otherVertex.distanceSq; }
+};
+// --- Struct definitions for Path Guiding Work End ---
+
 struct PointBVHNodeStats {
 	int nodeCount = 0, leafNodeCount = 0;
 	int minLeafDepth = INT_MAX, maxLeafDepth = -INT_MAX;
@@ -115,7 +126,7 @@ private:
 	PointBVHNode* r;
 	PointBVHNode* l;
 	int offset = 0, used = 0;
-	const int MAX_CHILDNODE_RECORDS = 8;
+	const int MAX_CHILDNODE_RECORDS = 16;
 	double buildTime = 0.0;
 	std::vector<PathVertex> pathVertexRecords;
 
@@ -216,10 +227,7 @@ private:
 		if (r != nullptr) r->statsNode(bvhStats, depth + 1);
 	}
 
-	void searchNode(Vec4 hitPosition, float radiusSq, std::vector<PathVertex>& pathVertices, std::vector<const PathVertex*>& nearbyVertices, int maxVertices) {
-		// Return if the nearby vertices exceed the max vertices count
-		if (nearbyVertices.size() >= maxVertices) return;
-		
+	void searchNode(Vec4 hitPosition, float radiusSq, std::vector<PathVertex>& pathVertices, std::vector<const PathVertex*>& nearbyVertices) {		
 		// Find the closest point in the AABB
 		Vec4 closestPoint;
 		closestPoint.x = std::max(std::min(hitPosition.x, this->bounds.max.x), this->bounds.min.x);
@@ -232,7 +240,6 @@ private:
 
 		if (isLeaf()) {
 			for (int i = offset; i < offset + used; i++) {
-				if (nearbyVertices.size() >= maxVertices) return;
 				const PathVertex& vertex = pathVertices[i];
 				float distanceSq2 = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
 				if (distanceSq2 <= radiusSq) nearbyVertices.push_back(&vertex);
@@ -240,8 +247,65 @@ private:
 			return;
 		}
 		else {
-			if (l != nullptr) l->searchNode(hitPosition, radiusSq, pathVertices, nearbyVertices, maxVertices);
-			if (r != nullptr) r->searchNode(hitPosition, radiusSq, pathVertices, nearbyVertices, maxVertices);
+			if (l != nullptr) l->searchNode(hitPosition, radiusSq, pathVertices, nearbyVertices);
+			if (r != nullptr) r->searchNode(hitPosition, radiusSq, pathVertices, nearbyVertices);
+		}
+	}
+
+	// Umm... will try to implement a kNN search by using max heap instead of radius based search
+	void kNNSearchNode(Vec4 hitPosition, float& dynamicRadiusSq, std::vector<PathVertex>& pathVertices, std::priority_queue<NearestPathVertex>& maxHeap) {
+		// We are in the leaf node of the list, can search now
+		if (isLeaf()) {
+			for (int i = offset; i < offset + used; i++) {
+				PathVertex& vertex = pathVertices[i];
+				float distanceSq = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
+				if (distanceSq <= dynamicRadiusSq) {
+					// Heap isn't full
+					NearestPathVertex nearestVertex{ distanceSq, &vertex };
+					if (maxHeap.size() < MAX_NEARBY_VERTICES) {
+						// Push the new nearest vertex in the heap
+						maxHeap.push(nearestVertex);
+						// Adjust the radius if the heap is full
+						if (maxHeap.size() == MAX_NEARBY_VERTICES) dynamicRadiusSq = maxHeap.top().distanceSq;
+					}
+					// Heap is full
+					else {
+						// Pop the furthest nearest vertex along the heap
+						maxHeap.pop();
+						// Push the new nearest vertex in the heap
+						maxHeap.push(nearestVertex);
+						// Shrink radius size
+						dynamicRadiusSq = maxHeap.top().distanceSq;
+					}
+				}
+			}
+			return;
+		}
+
+		// We are not in the leaf
+		// Calculate left child distance
+		Vec4 leftClosestPoint;
+		leftClosestPoint.x = std::max(std::min(hitPosition.x, l->bounds.max.x), l->bounds.min.x);
+		leftClosestPoint.y = std::max(std::min(hitPosition.y, l->bounds.max.y), l->bounds.min.y);
+		leftClosestPoint.z = std::max(std::min(hitPosition.z, l->bounds.max.z), l->bounds.min.z);
+		float distanceSqLeftChild = (SQ(leftClosestPoint.x - hitPosition.x) + SQ(leftClosestPoint.y - hitPosition.y) + SQ(leftClosestPoint.z - hitPosition.z));
+
+		// Calculate right child distance
+		Vec4 rightClosestPoint;
+		rightClosestPoint.x = std::max(std::min(hitPosition.x, r->bounds.max.x), r->bounds.min.x);
+		rightClosestPoint.y = std::max(std::min(hitPosition.y, r->bounds.max.y), r->bounds.min.y);
+		rightClosestPoint.z = std::max(std::min(hitPosition.z, r->bounds.max.z), r->bounds.min.z);
+		float distanceSqRightChild = (SQ(rightClosestPoint.x - hitPosition.x) + SQ(rightClosestPoint.y - hitPosition.y) + SQ(rightClosestPoint.z - hitPosition.z));
+		
+		// Branch to decide which child is the closest, and what order to traverse
+		if (distanceSqLeftChild < distanceSqRightChild) {
+			// Left Child is more closer, traverse left first and then right
+			if (l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) l->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap);
+			if (r != nullptr && distanceSqRightChild <= dynamicRadiusSq) r->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap);
+		} else {
+			// Right Child is more closer, traverse right first and then left
+			if (r != nullptr && distanceSqRightChild <= dynamicRadiusSq) r->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap);
+			if (l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) l->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap);
 		}
 	}
 public:
@@ -305,9 +369,14 @@ public:
 	}
 
 	// --- New Method ---
-	void search(Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices, int maxVertices) {
-		// Search from the root
-		searchNode(hitPosition, radiusSq, pathVertexRecords, nearbyVertices, maxVertices);
+	void search(Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices) {
+		// Start the radius search from the root
+		searchNode(hitPosition, radiusSq, pathVertexRecords, nearbyVertices);
+	}
+
+	void kNNSearch(Vec4 hitPosition, float dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap) {
+		// Start the kNN search from the root
+		kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertexRecords, maxHeap);
 	}
 };
 // --- Spatial-Tree Component to Store PathVertex Caches End ---
@@ -546,11 +615,13 @@ public:
 		// --- 1. Forward Pass Phase ---
 		std::vector<ForwardPassRecord> records;
 		std::vector<const PathVertex*> nearbyVertices;
+		std::priority_queue<NearestPathVertex> maxHeap;
 		records.reserve(10);                          // Max depth: 8, + 2 buffer space
 		nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
 
 		// Generate the path vertices in the forward pass (only populates the vector)
-		generatePathRecursive(r, 0, sampler, records, sTree, dTree, isGuidingPhase, nearbyVertices, stats);
+		// generatePathRecursive(r, 0, sampler, records, sTree, dTree, isGuidingPhase, nearbyVertices, stats);
+		generatePathRecursive(r, 0, sampler, records, sTree, dTree, isGuidingPhase, nearbyVertices, maxHeap, stats);
 
 		// --- 2. Backpropagation Phase ---
 		// Store Each Path Vertex to the vector via Backpropagation
@@ -581,7 +652,7 @@ public:
 	//    -> Project wi into PSS
 	//    -> Invert BSDF sampling
 	//    -> Sample PSS
-	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVHNode* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVHNode* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, std::priority_queue<NearestPathVertex>& maxHeap, ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 
@@ -647,15 +718,40 @@ public:
 			bool usePathGuiding = false;
 			if (isGuidingPhase && cache != nullptr && !isSpecular) {
 				// We are in the Path Guiding Phase
-				float radius = 0.2f;
+				#if SEARCH_KNN
+				// BVH will do kNN Search when retrieving nearest vertices (faster)
+				float radiusSq = FLT_MAX;
+				nearbyVertices.clear();
+				// BVH Nearest Path Vertices Search will be timed inside this scope
+				{
+					Timer bvhSearchTimer(stats.bvhSearchTimeMs);
+					cache->kNNSearch(shadingData.x, radiusSq, maxHeap);
+				}
+
+				while (!maxHeap.empty()) {
+					nearbyVertices.push_back(maxHeap.top().vertex);
+					maxHeap.pop();
+				}
+				#else
+				// BVH will do radius based search when retrieving nearest vertices (slower)
+				float radius = 0.05f;
 				float radiusSq = radius * radius;
 				nearbyVertices.clear();
+
+				// Define a Random Device and Initialize the Mersenne Twister to Generate RNGs
+				thread_local std::mt19937 mt{ std::random_device {}() };
 
 				// BVH Nearest Path Vertices Search will be timed inside this scope
 				{
 					Timer bvhSearchTimer(stats.bvhSearchTimeMs);
-					cache->search(shadingData.x, radiusSq, nearbyVertices, MAX_NEARBY_VERTICES);
+					cache->search(shadingData.x, radiusSq, nearbyVertices);
+					if (nearbyVertices.size() > MAX_NEARBY_VERTICES) {
+						// Shuffle and resize the vector list we obtain from BVH Search
+						std::shuffle(std::begin(nearbyVertices), std::end(nearbyVertices), mt);
+						nearbyVertices.resize(MAX_NEARBY_VERTICES);
+					}
 				}
+				#endif
 
 				// Debugging
 				#if DEBUG_GUIDED_PATH
@@ -678,7 +774,8 @@ public:
 				// QTree Building will be timed inside this scope
 				{
 					Timer qTreeBuildTimer(stats.qTreeBuildTimeMs);
-					for (auto& vertex : nearbyVertices) {
+					for (const auto* vertex : nearbyVertices) {
+						if (vertex == nullptr) continue;
 						if (Dot(shadingData.sNormal, vertex->normal) < 0.5f) continue;
 						Vec4 wiLocal = shadingData.frame.toLocal(vertex->wi);
 						if (wiLocal.z < 0.05f) continue;
@@ -826,7 +923,8 @@ public:
 			// Define indirect ray for the next bounce, and recurse through the function
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
 			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
-			generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, qTree, isGuidingPhase, nearbyVertices, stats, pdfCombined, isSpecular);
+			// generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, qTree, isGuidingPhase, nearbyVertices, stats, pdfCombined, isSpecular);
+			generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, qTree, isGuidingPhase, nearbyVertices, maxHeap, stats, pdfCombined, isSpecular);
 			return;
 		}
 		// --- Environment Map ---
