@@ -27,7 +27,7 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define GUIDED_PATH false
+#define GUIDED_PATH true
 #define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
 
@@ -35,10 +35,11 @@
 constexpr bool enableNEE = true;
 
 // Defensive Sampling & Mixture
-static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
-static const int MIN_ACCEPTED_INSERTIONS = 64;  // Aim between 16-64
+static const int MAX_NEARBY_VERTICES = 250;     // Aim between 200-800
+static const int MIN_ACCEPTED_INSERTIONS = 50;  // Aim between 16-64
 static const float BSDF_FRACTION = 0.5f;
 static const float QTREE_FRACTION = 0.5f;
+static const float MAX_FIREFLY_CLAMP = 10.f;
 // --- Constants for Path Guiding Algortihm End ---
 
 struct ScreenTile {
@@ -663,9 +664,8 @@ public:
 			
 			// Just a way to deal with firefly artifacts and data poisoning
 			// I think max luminance should be somewhere between 10 and 50...
-			float maxLuminance = 10.f;
 			float currentLuminance = guidingRadiance.Lum();
-			if (currentLuminance > maxLuminance) guidingRadiance = guidingRadiance * (maxLuminance / currentLuminance);
+			if (currentLuminance > MAX_FIREFLY_CLAMP) guidingRadiance = guidingRadiance * (MAX_FIREFLY_CLAMP / currentLuminance);
 		}
 		return incomingRadiance.isValid() ? incomingRadiance : Colour(0.f, 0.f, 0.f);
 	}
@@ -802,8 +802,6 @@ public:
 					for (const auto* vertex : nearbyVertices) {
 						if (vertex == nullptr) continue;
 						if (Dot(shadingData.sNormal, vertex->normal) < 0.1f) continue;
-						Vec4 wiLocal = shadingData.frame.toLocal(vertex->wi);
-						if (wiLocal.z < 0.01f) continue;
 
 						// BSDF inversion to get u, v, and u_lobe
 						float u, v, u_lobe;
@@ -817,7 +815,7 @@ public:
 						if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) continue;
 
 						// Insert into the QTree
-						float weight = std::max(vertex->Li.Lum(), 0.f);
+						float weight = std::max(std::min(vertex->Li.Lum(), MAX_FIREFLY_CLAMP), 0.f);
 						if (weight > 0.f) {
 							qTree.insert(u, v, weight);
 							totalInsertedWeight += weight;

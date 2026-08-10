@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <unordered_map>
 
@@ -205,7 +206,6 @@ static void runAllBSDFInversionTests() {
 static void testPDFIntegration() {
 	// Assuming maxDepth is 4 for this test
 	QTree qtree(4);
-	// FlatQTreeGrid qtree(4);
 
 	// Populate the QTree with sample data
 	qtree.insert(0.1f, 0.1f, 100.f);
@@ -235,7 +235,6 @@ static void testPDFIntegration() {
 static void testSamplePDFConsistency() {
 	// Populate the QTree with sample data
 	QTree qtree(3);
-	// FlatQTreeGrid qtree(3);
 	qtree.insert(0.2f, 0.2f, 10.f);
 
 	// Deterministic test values
@@ -254,7 +253,6 @@ static void testSamplePDFConsistency() {
 static void testNullSpace() {
 	// Populate the QTree with sample data
 	QTree qtree(2);
-	// FlatQTreeGrid qtree(2);
 	qtree.insert(0.1f, 0.1f, 10.f);
 
 	// Evaluate top-right corner
@@ -266,7 +264,6 @@ static void testNullSpace() {
 static void testBoundariesAndExtremes() {
 	// Populate the QTree with sample data
 	QTree qtree(4);
-	// FlatQTreeGrid qtree(4);
 	qtree.insert(0.f, 0.f, 10.f);
 	qtree.insert(0.9999f, 0.9999f, 10.f);
 	qtree.insert(1.f, 1.f, 10.f);
@@ -290,10 +287,9 @@ static void testBoundariesAndExtremes() {
 	assert(!std::isnan(pdfLow) && !std::isnan(pdfHigh));
 }
 
-void testMemoryAllocationStress() {
+static void testMemoryAllocationStress() {
 	// Initialize a deep tree (2^8 = 65536 leaves)
 	QTree qtree(8);
-	// FlatQTreeGrid qtree(8);
 	MTRandom sampler;
 
 	// Insert 100000 random samples
@@ -308,6 +304,125 @@ void testMemoryAllocationStress() {
 	std::cout << "Memory Stress Test Has Been Successfull..." << std::endl;
 	assert(pdfOut > 0.f && "Memory Stress Test Failed");
 }
+
+static void testStatisticalDistribution() {
+	// Initialize a shallow tree
+	QTree qtree(2);
+	qtree.insert(0.25f, 0.25f, 1.f);
+	qtree.insert(0.75f, 0.25f, 2.f);
+	qtree.insert(0.25f, 0.75f, 3.f);
+	qtree.insert(0.75f, 0.75f, 4.f);
+
+	MTRandom sampler;
+	int counts[4]{};
+	int numberOfSamples = 100000;
+
+	// Insert 100000 random samples
+	for (int i = 0; i < 100000; i++) {
+		float r1 = sampler.next();
+		float r2 = sampler.next();
+		float u, v, pdf;
+		qtree.sample(r1, r2, u, v, pdf);
+
+		// Determine which quadrant the sample fell into
+		if (u < 0.5f && v < 0.5f) counts[0]++;
+		else if (u >= 0.5f && v < 0.5f) counts[1]++;
+		else if (u < 0.5f && v >= 0.5f) counts[2]++;
+		else if (u >= 0.5f && v >= 0.5f) counts[3]++;
+	}
+
+	// Check if the empirical distribution matches the expected distribution
+	float tolerance = 0.015f;  // 1.5% tolerance
+	assert(std::fabs((counts[0] / (float)numberOfSamples) - 0.1f) < tolerance && "Statistical Distribution Test Failed...");
+	assert(std::fabs((counts[1] / (float)numberOfSamples) - 0.2f) < tolerance && "Statistical Distribution Test Failed...");
+	assert(std::fabs((counts[2] / (float)numberOfSamples) - 0.3f) < tolerance && "Statistical Distribution Test Failed...");
+	assert(std::fabs((counts[3] / (float)numberOfSamples) - 0.4f) < tolerance && "Statistical Distribution Test Failed...");
+	std::cout << "Statistical Distribution Test Passed..." << std::endl;
+}
+
+static void testClearAndReuse() {
+	QTree qtree(3);
+	qtree.insert(0.1f, 0.1f, 100.f);
+	float initialPdf = qtree.pdf(0.1f, 0.1f);
+	assert(initialPdf > 1.0f && "Tree should have concentrated PDF.");
+
+	// Clear the tree
+	qtree.clear();
+
+	// Verify fallback to uniform behavior when empty
+	float emptyPdf = qtree.pdf(0.5f, 0.5f);
+	assert((emptyPdf == 1.f) && "Cleared tree should act uniform.");
+
+	// Insert new data elsewhere and check
+	qtree.insert(0.9f, 0.9f, 100.f);
+	float newPdfOldSpot = qtree.pdf(0.1f, 0.1f);
+	assert((newPdfOldSpot == 0.f) && "Old data should be completely gone.");
+	float newPdfNewSpot = qtree.pdf(0.9f, 0.9f);
+	assert((newPdfNewSpot > 1.f) && "New data should dictate the PDF.");
+	std::cout << "Clear and Reuse Test Passed..." << std::endl;
+}
+
+static void testEmptyTree() {
+	// Testing PDF on an empty tree
+	QTree qtree(3);
+	assert(qtree.pdf(0.2f, 0.3f) == 1.f);
+	assert(qtree.pdf(0.8f, 0.9f) == 1.f);
+
+	// Test Sampling
+	float u, v, pdf;
+	qtree.sample(0.123f, 0.456f, u, v, pdf);
+	assert(u == 0.123f && v == 0.456f && "Empty tree should pass r1/r2 straight to u/v.");
+	assert(pdf == 1.f && "Empty tree PDF should be 1.");
+	std::cout << "Empty Tree Test Passed..." << std::endl;
+}
+
+static void testExactMidpoint() {
+	// Initialize QTree and insert a point in the middle
+	QTree qtree(4);
+	qtree.insert(0.5f, 0.5f, 10.f);
+	float pdfBottomLeft = qtree.pdf(0.49f, 0.49f);
+	float pdfTopRight = qtree.pdf(0.51f, 0.51f);
+	assert(pdfBottomLeft == 0.0f && "Exact midpoint should not leak to bottom-left.");
+	assert(pdfTopRight > 0.0f && "Exact midpoint should evaluate in top-right.");
+	std::cout << "Exact Midpoint Boundary Test Passed..." << std::endl;
+}
+
+static void testNaNInFCatch() {
+	QTree qtree(3);
+	float nanVal = std::numeric_limits<float>::quiet_NaN();
+	float infVal = std::numeric_limits<float>::infinity();
+
+	qtree.insert(0.5f, 0.5f, nanVal);
+	qtree.insert(0.2f, 0.2f, -nanVal);
+	qtree.insert(0.8f, 0.8f, infVal);
+	qtree.insert(0.3f, 0.3f, -infVal);
+
+	float pdfEvaluated = qtree.pdf(0.5f, 0.5f);
+	assert(pdfEvaluated == 1.f && "Tree should remain uniform after rejecting NaN and InF.");
+	std::cout << "NaN and InF Resilience Test Passed..." << std::endl;
+}
+
+static void runAllQTreeTests() {
+	std::cout << "========================================" << std::endl;
+	std::cout << "            START QTREE TESTS!          " << std::endl;
+	std::cout << "========================================" << std::endl;
+
+	// Call QTree Tests
+	testSamplePDFConsistency();
+	testPDFIntegration();
+	testNullSpace();
+	testBoundariesAndExtremes();
+	testMemoryAllocationStress();
+	testStatisticalDistribution();
+	testClearAndReuse();
+	testEmptyTree();
+	testExactMidpoint();
+	testNaNInFCatch();
+
+	std::cout << "========================================" << std::endl;
+	std::cout << "         ALL QTREE TESTS PASSED!        " << std::endl;
+	std::cout << "========================================" << std::endl;
+}
 // --- QTree Tests End ---
 
 // Run all the tests here
@@ -315,12 +430,8 @@ static void runTest() {
 	// BSDF Inversion Test
 	runAllBSDFInversionTests();
 
-	// QTree Tests
-	testSamplePDFConsistency();
-	testPDFIntegration();
-	testNullSpace();
-	testBoundariesAndExtremes();
-	testMemoryAllocationStress();
+	// QTree Test
+	runAllQTreeTests();
 }
 
 int main(int argc, char* argv[]) {

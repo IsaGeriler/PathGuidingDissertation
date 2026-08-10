@@ -7,6 +7,7 @@
 // Child Index 1: Bottom-Right (1,0)
 // Child Index 2: Top-Left     (0,1)
 // Child Index 3: Top-Right    (1,1)
+
 struct QTreeBox {
 	// Attributes
 	float minU; float maxU;
@@ -247,7 +248,7 @@ public:
 
 	// Methods
 	void insert(float u, float v, float luminance) {
-		if (!(luminance > 0.f) || u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return;
+		if (!(luminance > 0.f) || std::isnan(luminance) || std::isinf(luminance) || u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return;
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;
