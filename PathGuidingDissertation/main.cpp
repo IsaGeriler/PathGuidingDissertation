@@ -328,7 +328,7 @@ int main(int argc, char* argv[]) {
 	runTest();
 
 	// Note - Test on these scenes
-	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Bedroom +, Living-Room 2+
+	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Bedroom, Living-Room 2
 	// Classroom, Sibenik, Dining Room, Living Room 1
 
 	// -- Area Light Test Scenes --

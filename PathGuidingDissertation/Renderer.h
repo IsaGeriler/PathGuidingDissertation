@@ -34,13 +34,11 @@
 // Enable NEE or not for Incoming Radiance (Li)
 constexpr bool enableNEE = true;
 
-// Defensive Sampling & Mixture (50-50)
-static const int MAX_NEARBY_VERTICES = 100;
-static const int MIN_ACCEPTED_INSERTIONS = 50;
+// Defensive Sampling & Mixture
+static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
+static const int MIN_ACCEPTED_INSERTIONS = 64;  // Aim between 16-64
 static const float BSDF_FRACTION = 0.5f;
 static const float QTREE_FRACTION = 0.5f;
-static const float QTREE_MIX = 0.9f;
-static const float UNIFORM_MIX = 0.1f;
 // --- Constants for Path Guiding Algortihm End ---
 
 struct ScreenTile {
@@ -119,26 +117,49 @@ struct Timer {
 // --- Profiling Structs End ---
 
 // --- Spatial-Tree Component to Store PathVertex Caches ---
-class PointBVHNode {
-private:
+struct PointBVHNode {
 	// Attributes
 	AABB bounds;
 	PointBVHNode* r;
 	PointBVHNode* l;
-	int offset = 0, used = 0;
+	int offset = 0;
+	int used = 0;
+
+	// Constructor
+	PointBVHNode() { l = nullptr; r = nullptr; }
+
+	// Destructor
+	~PointBVHNode() {
+		if (l != nullptr) { delete l; l = nullptr; }
+		if (r != nullptr) { delete r; r = nullptr; }
+	}
+
+	// Helper Method
+	bool isLeaf() const { return l == nullptr && r == nullptr; }
+};
+
+class PointBVH {
+private:
+	PointBVHNode* root;
+	std::vector<PathVertex> pathVertices;
 	const int MAX_CHILDNODE_RECORDS = 16;
 	double buildTime = 0.0;
-	std::vector<PathVertex> pathVertexRecords;
 
-	// Private Methods
-	bool isLeaf() const { return l == nullptr && r == nullptr; }
+	void updateBounds(PointBVHNode* node) {
+		// Reset the bounds
+		node->bounds.reset();
+		// Extend the bounds according to the position vector
+		for (int i = node->offset; i < node->offset + node->used; i++) {
+			node->bounds.extend(pathVertices[i].position);
+		}
+	}
 	
-	void subdivide(std::vector<PathVertex>& pathVertices) {
+	void subdivide(PointBVHNode* node) {
 		// Return if the used node count exceeds max child node count
-		if (used <= MAX_CHILDNODE_RECORDS) return;
+		if (node->used <= MAX_CHILDNODE_RECORDS) return;
 
 		// Get the extend vector from the AABB bounds
-		Vec4 extendVector = bounds.max - bounds.min;
+		Vec4 extendVector = node->bounds.max - node->bounds.min;
 
 		// Find the split axis
 		int ax = 0;
@@ -146,9 +167,9 @@ private:
 		if (extendVector.z > extendVector[ax]) ax = 2;
 
 		// Get the first, last, and nth element indexes
-		auto first = pathVertices.begin() + offset;
-		auto nth = pathVertices.begin() + offset + used / 2;
-		auto last = pathVertices.begin() + offset + used;
+		auto first = pathVertices.begin() + node->offset;
+		auto nth = pathVertices.begin() + node->offset + node->used / 2;
+		auto last = pathVertices.begin() + node->offset + node->used;
 
 		// From those indexes, sort elements via a comparator
 		std::nth_element(first, nth, last, 
@@ -159,63 +180,54 @@ private:
 		);
 
 		// Get the middle index
-		int middle = offset + used / 2;
+		int middle = node->offset + node->used / 2;
 
 		// Create left child and assign the values to it's attributes
-		l = new PointBVHNode();
-		l->offset = offset;
-		l->used = used / 2;
+		node->l = new PointBVHNode();
+		node->l->offset = node->offset;
+		node->l->used = node->used / 2;
 
 		// Create right child and assign the values to it's attributes
-		r = new PointBVHNode();
-		r->offset = middle;
-		r->used = used - used / 2;
+		node->r = new PointBVHNode();
+		node->r->offset = middle;
+		node->r->used = node->used - node->used / 2;
 
 		// Reset the node count for the parent
-		used = 0;
+		node->used = 0;
 
 		// Update AABB bounds
-		l->updateBounds(pathVertices);
-		r->updateBounds(pathVertices);
+		updateBounds(node->l);
+		updateBounds(node->r);
 
 		// Subdivide the tree
-		l->subdivide(pathVertices);
-		r->subdivide(pathVertices);
+		subdivide(node->l);
+		subdivide(node->r);
 	}
 
-	void updateBounds(std::vector<PathVertex>& pathVertices) {
-		// Reset the bounds
-		bounds.reset();
-		// Extend the bounds according to the position vector
-		for (int i = offset; i < offset + used; i++) {
-			bounds.extend(pathVertices[i].position);
-		}
-	}
-
-	int validateNode(std::vector<PathVertex>& pathVertices, int depth) const {
+	int validateNode(const PointBVHNode* node, int depth) const {
 		// Check for leaf node case
-		if (isLeaf()) {
+		if (node->isLeaf()) {
 			// Check if we have more used records than the max amount
-			assert(used <= MAX_CHILDNODE_RECORDS && "Leaf carries records over capacity");
+			assert(node->used <= MAX_CHILDNODE_RECORDS && "Leaf carries records over capacity");
 			// Check if the record positions are inside the bounding box or not
-			for (int i = offset; i < offset + used; i++) {
-				assert(bounds.containsPoint(pathVertices[i].position, EPSILON) && "Record outside of its leaf's bounding box.");
+			for (int i = node->offset; i < node->offset + node->used; i++) {
+				assert(node->bounds.containsPoint(pathVertices[i].position, EPSILON) && "Record outside of its leaf's bounding box.");
 			}
-			return used;
+			return node->used;
 		}
 		// Handle not leaf node case
-		assert(used == 0 && "Parent node is abruptly carrying records");
-		assert(l != nullptr && r != nullptr && "Parent node is missing a child node");
-		assert(bounds.containsAABB(l->bounds, EPSILON) && "Left child's bounding box is not in parent bounding box.");
-		assert(bounds.containsAABB(r->bounds, EPSILON) && "Right child's bounding box is not in parent bounding box.");
-		return l->validateNode(pathVertices, depth + 1) + r->validateNode(pathVertices, depth + 1);
+		assert(node->used == 0 && "Parent node is abruptly carrying records");
+		assert(node->l != nullptr && node->r != nullptr && "Parent node is missing a child node");
+		assert(node->bounds.containsAABB(node->l->bounds, EPSILON) && "Left child's bounding box is not in parent bounding box.");
+		assert(node->bounds.containsAABB(node->r->bounds, EPSILON) && "Right child's bounding box is not in parent bounding box.");
+		return validateNode(node->l, depth + 1) + validateNode(node->r, depth + 1);
 	}
 
-	void statsNode(PointBVHNodeStats& bvhStats, int depth) {
+	void statsNode(const PointBVHNode* node, PointBVHNodeStats& bvhStats, int depth) {
 		bvhStats.nodeCount++;
 		bvhStats.memory_in_bytes += sizeof(PointBVHNode);
 		// Check if leaf node
-		if (isLeaf()) {
+		if (node->isLeaf()) {
 			bvhStats.leafNodeCount++;
 			bvhStats.minLeafDepth = std::min(bvhStats.minLeafDepth, depth);
 			bvhStats.maxLeafDepth = std::max(bvhStats.maxLeafDepth, depth);
@@ -223,23 +235,23 @@ private:
 			return;
 		}
 		// Recurse through the child nodes
-		if (l != nullptr) l->statsNode(bvhStats, depth + 1);
-		if (r != nullptr) r->statsNode(bvhStats, depth + 1);
+		if (node->l != nullptr) statsNode(node->l, bvhStats, depth + 1);
+		if (node->r != nullptr) statsNode(node->r, bvhStats, depth + 1);
 	}
 
-	void searchNode(Vec4 hitPosition, float radiusSq, std::vector<PathVertex>& pathVertices, std::vector<const PathVertex*>& nearbyVertices) {		
+	void radiusSearchNode(const PointBVHNode* node, Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices) {
 		// Find the closest point in the AABB
 		Vec4 closestPoint;
-		closestPoint.x = std::max(std::min(hitPosition.x, this->bounds.max.x), this->bounds.min.x);
-		closestPoint.y = std::max(std::min(hitPosition.y, this->bounds.max.y), this->bounds.min.y);
-		closestPoint.z = std::max(std::min(hitPosition.z, this->bounds.max.z), this->bounds.min.z);
+		closestPoint.x = std::max(std::min(hitPosition.x, node->bounds.max.x), node->bounds.min.x);
+		closestPoint.y = std::max(std::min(hitPosition.y, node->bounds.max.y), node->bounds.min.y);
+		closestPoint.z = std::max(std::min(hitPosition.z, node->bounds.max.z), node->bounds.min.z);
 
 		// Calculate distance square to prevent sqrt and omit the ones less than radiusSq
 		float distanceSq = (SQ(closestPoint.x - hitPosition.x) + SQ(closestPoint.y - hitPosition.y) + SQ(closestPoint.z - hitPosition.z));
 		if (distanceSq > radiusSq) return;
 
-		if (isLeaf()) {
-			for (int i = offset; i < offset + used; i++) {
+		if (node->isLeaf()) {
+			for (int i = node->offset; i < node->offset + node->used; i++) {
 				const PathVertex& vertex = pathVertices[i];
 				float distanceSq2 = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
 				if (distanceSq2 <= radiusSq) nearbyVertices.push_back(&vertex);
@@ -247,16 +259,16 @@ private:
 			return;
 		}
 		else {
-			if (l != nullptr) l->searchNode(hitPosition, radiusSq, pathVertices, nearbyVertices);
-			if (r != nullptr) r->searchNode(hitPosition, radiusSq, pathVertices, nearbyVertices);
+			if (node->l != nullptr) radiusSearchNode(node->l, hitPosition, radiusSq, nearbyVertices);
+			if (node->r != nullptr) radiusSearchNode(node->r, hitPosition, radiusSq, nearbyVertices);
 		}
 	}
 
 	// Umm... will try to implement a kNN search by using max heap instead of radius based search
-	void kNNSearchNode(Vec4 hitPosition, float& dynamicRadiusSq, std::vector<PathVertex>& pathVertices, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
+	void kNNSearchNode(const PointBVHNode* node, Vec4 hitPosition, float& dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
 		// We are in the leaf node of the list, can search now
-		if (isLeaf()) {
-			for (int i = offset; i < offset + used; i++) {
+		if (node->isLeaf()) {
+			for (int i = node->offset; i < node->offset + node->used; i++) {
 				PathVertex& vertex = pathVertices[i];
 				float distanceSq = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
 				if (distanceSq <= dynamicRadiusSq) {
@@ -285,84 +297,85 @@ private:
 		// We are not in the leaf, calculate left and right child distance
 		float distanceSqLeftChild = FLT_MAX;
 		float distanceSqRightChild = FLT_MAX;
-		if (l != nullptr) {
+		if (node->l != nullptr) {
 			Vec4 leftClosestPoint;
-			leftClosestPoint.x = std::max(std::min(hitPosition.x, l->bounds.max.x), l->bounds.min.x);
-			leftClosestPoint.y = std::max(std::min(hitPosition.y, l->bounds.max.y), l->bounds.min.y);
-			leftClosestPoint.z = std::max(std::min(hitPosition.z, l->bounds.max.z), l->bounds.min.z);
+			leftClosestPoint.x = std::max(std::min(hitPosition.x, node->l->bounds.max.x), node->l->bounds.min.x);
+			leftClosestPoint.y = std::max(std::min(hitPosition.y, node->l->bounds.max.y), node->l->bounds.min.y);
+			leftClosestPoint.z = std::max(std::min(hitPosition.z, node->l->bounds.max.z), node->l->bounds.min.z);
 			distanceSqLeftChild = (SQ(leftClosestPoint.x - hitPosition.x) + SQ(leftClosestPoint.y - hitPosition.y) + SQ(leftClosestPoint.z - hitPosition.z));
 		}
 
-		if (r != nullptr) {
+		if (node->r != nullptr) {
 			Vec4 rightClosestPoint;
-			rightClosestPoint.x = std::max(std::min(hitPosition.x, r->bounds.max.x), r->bounds.min.x);
-			rightClosestPoint.y = std::max(std::min(hitPosition.y, r->bounds.max.y), r->bounds.min.y);
-			rightClosestPoint.z = std::max(std::min(hitPosition.z, r->bounds.max.z), r->bounds.min.z);
+			rightClosestPoint.x = std::max(std::min(hitPosition.x, node->r->bounds.max.x), node->r->bounds.min.x);
+			rightClosestPoint.y = std::max(std::min(hitPosition.y, node->r->bounds.max.y), node->r->bounds.min.y);
+			rightClosestPoint.z = std::max(std::min(hitPosition.z, node->r->bounds.max.z), node->r->bounds.min.z);
 			distanceSqRightChild = (SQ(rightClosestPoint.x - hitPosition.x) + SQ(rightClosestPoint.y - hitPosition.y) + SQ(rightClosestPoint.z - hitPosition.z));
 		}
 		
 		// Branch to decide which child is the closest, and what order to traverse
 		if (distanceSqLeftChild < distanceSqRightChild) {
 			// Left Child is more closer, traverse left first and then right
-			if (l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) l->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap, k);
-			if (r != nullptr && distanceSqRightChild <= dynamicRadiusSq) r->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap, k);
+			if (node->l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) kNNSearchNode(node->l, hitPosition, dynamicRadiusSq, maxHeap, k);
+			if (node->r != nullptr && distanceSqRightChild <= dynamicRadiusSq) kNNSearchNode(node->r, hitPosition, dynamicRadiusSq, maxHeap, k);
 		} else {
 			// Right Child is more closer, traverse right first and then left
-			if (r != nullptr && distanceSqRightChild <= dynamicRadiusSq) r->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap, k);
-			if (l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) l->kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertices, maxHeap, k);
+			if (node->r != nullptr && distanceSqRightChild <= dynamicRadiusSq) kNNSearchNode(node->r, hitPosition, dynamicRadiusSq, maxHeap, k);
+			if (node->l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) kNNSearchNode(node->l, hitPosition, dynamicRadiusSq, maxHeap, k);
 		}
 	}
 public:
 	// Constructor
-	PointBVHNode() {
-		r = nullptr;
-		l = nullptr;
-	}
+	PointBVH() { root = nullptr; }
 
 	// Destructor
-	~PointBVHNode() {
-		if (r != nullptr) delete r;
-		if (l != nullptr) delete l;
-	}
+	~PointBVH() { if (root != nullptr) { delete root; root = nullptr; } }
 
 	// Public Methods
-	void buildPointBVHNode(std::vector<PathVertex>&& inputPathVertices) {
+	void build(std::vector<PathVertex>&& inputPathVertices) {
 		// Handle degenerate case where the passed vector is empty
 		if (inputPathVertices.empty()) return;
-		pathVertexRecords = std::move(inputPathVertices);
+		pathVertices = std::move(inputPathVertices);
+
+		// If root not null, delete it
+		if (root != nullptr) { delete root; root = nullptr; }
+
+		// Initialize root
+		root = new PointBVHNode();
+		root->offset = 0;
+		root->used = (int)pathVertices.size();
 
 		// Time the build time using chrono
 		auto start = std::chrono::high_resolution_clock::now();
 
-		// Set these values for the root node
-		offset = 0; used = (int)pathVertexRecords.size();
-
-		// Update and subdivide the root node
-		updateBounds(pathVertexRecords);
-		subdivide(pathVertexRecords);
+		// Update bounds and subdivide the root node
+		updateBounds(root);
+		subdivide(root);
 
 		// End the timing
 		auto end = std::chrono::high_resolution_clock::now();
 
 		// Save the build time, and call validate and stats
 		buildTime = std::chrono::duration<double, std::milli>(end - start).count();
-		validate();
-		stats();
+		validate(root);
+		stats(root);
 	}
 
-	void validate() {
+	void validate(const PointBVHNode* node) {
 		// Start from the root node, depth at 0
-		int counted = validateNode(pathVertexRecords, 0);
-		assert(counted == (int)(pathVertexRecords.size()) && "Records lost or duplicated during the build phase.");
+		if (node != nullptr) {
+			int counted = validateNode(node, 0);
+			assert(counted == (int)(pathVertices.size()) && "Records lost or duplicated during the build phase.");
+		}
 	}
 
-	PointBVHNodeStats stats() {
+	PointBVHNodeStats stats(const PointBVHNode* node) {
 		PointBVHNodeStats bvhStats;
-		bvhStats.memory_in_bytes = pathVertexRecords.size() * sizeof(PathVertex);
-		statsNode(bvhStats, 0);
+		bvhStats.memory_in_bytes = pathVertices.size() * sizeof(PathVertex);
+		statsNode(node, bvhStats, 0);
 		bvhStats.buildTimeMs = buildTime;
 		std::cout << "PointBVHNode["
-			<< "\n  -- path vertex records: " << pathVertexRecords.size()
+			<< "\n  -- path vertex records: " << pathVertices.size()
 			<< "\n  -- nodes: " << bvhStats.nodeCount
 			<< "\n  -- leaf nodes: " << bvhStats.leafNodeCount
 			<< "\n  -- depth: " << bvhStats.minLeafDepth << "-" << bvhStats.maxLeafDepth
@@ -373,14 +386,14 @@ public:
 	}
 
 	// --- New Method ---
-	void search(Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices) {
+	void radiusSearch(Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices) {
 		// Start the radius search from the root
-		searchNode(hitPosition, radiusSq, pathVertexRecords, nearbyVertices);
+		if (root != nullptr) radiusSearchNode(root, hitPosition, radiusSq, nearbyVertices);
 	}
 
 	void kNNSearch(Vec4 hitPosition, float dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
 		// Start the kNN search from the root
-		kNNSearchNode(hitPosition, dynamicRadiusSq, pathVertexRecords, maxHeap, k);
+		if (root != nullptr) kNNSearchNode(root, hitPosition, dynamicRadiusSq, maxHeap, k);
 	}
 };
 // --- Spatial-Tree Component to Store PathVertex Caches End ---
@@ -395,11 +408,11 @@ public:
 	unsigned int numProcs;
 
 	// Cached vertices will be stored in a BVH structure
-	PointBVHNode* cacheBVH;
+	PointBVH* cacheBVH;
 	std::vector<PathVertex> globalCacheList;
 	// Ground Truth: 8192/16384					(should really be an absurd number to eliminate variance)
 	// Testing SPPs: 128/256/512/1024/2048/4096 (render, and compare error metrics with the groung truth)
-	int maxSPP = 128;
+	int maxSPP = 512;
 	int learningThreshold = maxSPP / 8;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
@@ -615,7 +628,7 @@ public:
 		}
 	}
 
-	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVHNode* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
+	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
 		// --- 1. Forward Pass Phase ---
 		std::vector<ForwardPassRecord> records;
 		std::vector<const PathVertex*> nearbyVertices;
@@ -624,12 +637,12 @@ public:
 		nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
 
 		// Generate the path vertices in the forward pass (only populates the vector)
-		// generatePathRecursive(r, 0, sampler, records, sTree, dTree, isGuidingPhase, nearbyVertices, stats);
 		generatePathRecursive(r, 0, sampler, records, sTree, dTree, isGuidingPhase, nearbyVertices, maxHeap, stats);
 
 		// --- 2. Backpropagation Phase ---
 		// Store Each Path Vertex to the vector via Backpropagation
 		Colour incomingRadiance(0.f, 0.f, 0.f);
+		Colour guidingRadiance(0.f, 0.f, 0.f);
 		for (int i = (int)(records.size() - 1); i >= 0; i--) {
 			if (!isGuidingPhase) {
 				// Learning Phase - Data Collection
@@ -638,16 +651,22 @@ public:
 					pathVertex.position = records[i].position;
 					pathVertex.normal = records[i].normal;
 					pathVertex.wi = records[i].wi;
-					pathVertex.Li = incomingRadiance;
+					pathVertex.Li = guidingRadiance;
 					if (pathVertex.Li.isValid() && pathVertex.Li.Lum() > 0) pathVertices.push_back(pathVertex);
 				}
 			}
-			// Update the incoming radiance so that Li-1 can use this previous Li
-			if (enableNEE) incomingRadiance = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * incomingRadiance);
-			else incomingRadiance = records[i].emission + (records[i].bsdfWeight * incomingRadiance);
+			// Update the incoming and guiding radiance so that Li-1 can use this previous Li
+			Colour emissionAndDirect = enableNEE ? (records[i].misEmission + records[i].directLighting) : records[i].emission;
+			incomingRadiance = emissionAndDirect + (records[i].bsdfWeight * incomingRadiance);
+			guidingRadiance = emissionAndDirect + (records[i].bsdfWeight * guidingRadiance);
+			
+			// Just a way to deal with firefly artifacts and data poisoning
+			// I think max luminance should be somewhere between 10 and 50...
+			float maxLuminance = 10.f;
+			float currentLuminance = guidingRadiance.Lum();
+			if (currentLuminance > maxLuminance) guidingRadiance = guidingRadiance * (maxLuminance / currentLuminance);
 		}
-		if (!incomingRadiance.isValid()) return Colour(0.f, 0.f, 0.f);
-		return incomingRadiance;
+		return incomingRadiance.isValid() ? incomingRadiance : Colour(0.f, 0.f, 0.f);
 	}
 
 	// --- NEW METHOD ---
@@ -656,7 +675,7 @@ public:
 	//    -> Project wi into PSS
 	//    -> Invert BSDF sampling
 	//    -> Sample PSS
-	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVHNode* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, std::priority_queue<NearestPathVertex>& maxHeap, ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVH* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, std::priority_queue<NearestPathVertex>& maxHeap, ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 
@@ -748,7 +767,7 @@ public:
 				// BVH Nearest Path Vertices Search will be timed inside this scope
 				{
 					Timer bvhSearchTimer(stats.bvhSearchTimeMs);
-					cache->search(shadingData.x, radiusSq, nearbyVertices);
+					cache->radiusSearch(shadingData.x, radiusSq, nearbyVertices);
 					if (nearbyVertices.size() > MAX_NEARBY_VERTICES) {
 						// Shuffle and resize the vector list we obtain from BVH Search
 						std::shuffle(std::begin(nearbyVertices), std::end(nearbyVertices), mt);
@@ -775,14 +794,15 @@ public:
 				// Debugging End
 
 				int acceptedVertices = 0;
+				float totalInsertedWeight = 0.f;
 				// QTree Building will be timed inside this scope
 				{
 					Timer qTreeBuildTimer(stats.qTreeBuildTimeMs);
 					for (const auto* vertex : nearbyVertices) {
 						if (vertex == nullptr) continue;
-						if (Dot(shadingData.sNormal, vertex->normal) < 0.5f) continue;
+						if (Dot(shadingData.sNormal, vertex->normal) < 0.1f) continue;
 						Vec4 wiLocal = shadingData.frame.toLocal(vertex->wi);
-						if (wiLocal.z < 0.05f) continue;
+						if (wiLocal.z < 0.01f) continue;
 
 						// BSDF inversion to get u, v, and u_lobe
 						float u, v, u_lobe;
@@ -796,13 +816,16 @@ public:
 						if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) continue;
 
 						// Insert into the QTree
-						float weight = std::sqrt(std::max(0.f, vertex->Li.Lum()));
-						qTree.insert(u, v, weight);
-						acceptedVertices++;
+						float weight = std::max(vertex->Li.Lum(), 0.f);
+						if (weight > 0.f) {
+							qTree.insert(u, v, weight);
+							totalInsertedWeight += weight;
+							acceptedVertices++;
+						}
 					}
 				}
 				// Timing completed
-				usePathGuiding = acceptedVertices >= 50;
+				usePathGuiding = (acceptedVertices >= MIN_ACCEPTED_INSERTIONS) && (totalInsertedWeight > EPSILON);
 				if (usePathGuiding) stats.guidedPathBounceCount++;
 				if (!usePathGuiding) qTree.clear();
 			}
@@ -817,11 +840,11 @@ public:
 				float u, v, u_lobe;
 				shadingData.bsdf->invert(shadingData, wi, u, v, u_lobe);
 
-				// If not valid u, return BSDF PDF, multiplied with BSDF fraction
-				if (u < 0.f) return basePdf * BSDF_FRACTION;
+				// If not valid u, return BSDF PDF
+				if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) return basePdf;
 
 				// If inversion OK, return MIS combined PDF for Path Guiding
-				float qTreePdf = (QTREE_MIX * qTree.pdf(u, v)) + UNIFORM_MIX;
+				float qTreePdf = qTree.pdf(u, v);
 				return basePdf * (BSDF_FRACTION + QTREE_FRACTION * qTreePdf);
 			};
 
@@ -853,8 +876,7 @@ public:
 					float u_lobe_out = sampler->next();
 
 					float u_out = 0.f, v_out = 0.f, treePdfIgnored = 0.f;
-					if (sampler->next() < UNIFORM_MIX) { u_out = sampler->next(); v_out = sampler->next(); }
-					else { qTree.sample(r1, r2, u_out, v_out, treePdfIgnored); }
+					qTree.sample(r1, r2, u_out, v_out, treePdfIgnored);
 
 					// Then do BSDF sampling with the new numbers obtained
 					GuidedPathSampler dummySampler;
@@ -866,6 +888,7 @@ public:
 					float pdfIgnored = 0.f;
 					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfIgnored);
 				}
+				// Defensive Sampling - MIS Mixture PDF
 				pdfCombined = forwardPdf(wi);
 			} else {
 				wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfCombined);
@@ -877,7 +900,7 @@ public:
 				// Invert debug sample
 				float uDebug = 0.f, vDebug = 0.f, lobeDebug = 0.f;
 				shadingData.bsdf->invert(shadingData, wi, uDebug, vDebug, lobeDebug);
-				float qDebug = (uDebug >= 0.f) ? (QTREE_MIX * qTree.pdf(uDebug, vDebug) + UNIFORM_MIX) : 0.f;
+				float qDebug = (uDebug >= 0.f) ? qTree.pdf(uDebug, vDebug) : 0.f;
 				
 				// Scale for visibility
 				float debugColor = std::min(qDebug * 0.1f, 1.0f); 
@@ -904,7 +927,6 @@ public:
 				records.push_back(record);
 				return;
 			}
-
 			// Check cosine term
 			float cosTheta = fabs(Dot(wi, shadingData.sNormal));
 			if (cosTheta <= 0.f) { records.push_back(record); return; }
@@ -912,22 +934,12 @@ public:
 			// Store the necessary records in the record structure
 			record.wi = wi;
 			record.bsdfWeight = (fBsdf * cosTheta) / (pdfCombined * rrpRecord);
-
-			// Just a way to deal with Firefly Artifactings
-			float maxLuminance = 20.f;  // Should be somewhere between 10 and 50
-			float currentLuminance = record.bsdfWeight.Lum();
-
-			if (currentLuminance > maxLuminance) {
-				record.bsdfWeight = record.bsdfWeight * (maxLuminance / currentLuminance);
-			}
-
 			record.storeRecord = !isSpecular;
 			records.push_back(record);
 
 			// Define indirect ray for the next bounce, and recurse through the function
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
 			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
-			// generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, qTree, isGuidingPhase, nearbyVertices, stats, pdfCombined, isSpecular);
 			generatePathRecursive(indirectRay, depth + 1, sampler, records, cache, qTree, isGuidingPhase, nearbyVertices, maxHeap, stats, pdfCombined, isSpecular);
 			return;
 		}
@@ -1224,8 +1236,8 @@ public:
 		if ((getSPP() == learningThreshold - 1)) {
 			std::cout << "Learning phase finished. Building BVH for cached path vertices..." << std::endl;
 			std::cout << "Total cached path vertices: " << globalCacheList.size() << std::endl;
-			cacheBVH = new PointBVHNode();
-			cacheBVH->buildPointBVHNode(std::move(globalCacheList));
+			cacheBVH = new PointBVH();
+			cacheBVH->build(std::move(globalCacheList));
 
 			// Clear Global Cache Estimates List
 			globalCacheList.clear();
