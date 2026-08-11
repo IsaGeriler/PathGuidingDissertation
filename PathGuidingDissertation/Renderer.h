@@ -26,6 +26,10 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define __STDC_LIB_EXT1__
+#include "ThirdParty/stb/stb_image_write.h"
+
 // --- Constants for Path Guiding Algortihm ---
 #define GUIDED_PATH true
 #define SEARCH_KNN true
@@ -35,11 +39,11 @@
 constexpr bool enableNEE = true;
 
 // Defensive Sampling & Mixture
-static const int MAX_NEARBY_VERTICES = 250;     // Aim between 200-800
-static const int MIN_ACCEPTED_INSERTIONS = 50;  // Aim between 16-64
+static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
+static const int MIN_ACCEPTED_INSERTIONS = 32;  // Aim between 16-64
 static const float BSDF_FRACTION = 0.5f;
 static const float QTREE_FRACTION = 0.5f;
-static const float MAX_FIREFLY_CLAMP = 10.f;
+static const float MAX_FIREFLY_CLAMP = 10.f;    // Adjust as needed, but probably between 10-50 (or 100)
 // --- Constants for Path Guiding Algortihm End ---
 
 struct ScreenTile {
@@ -632,18 +636,22 @@ public:
 
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
 		// --- 1. Forward Pass Phase ---
-		std::vector<ForwardPassRecord> records;
-		std::vector<const PathVertex*> nearbyVertices;
-		std::priority_queue<NearestPathVertex> maxHeap;
-		records.reserve(10);                          // Max depth: 8, + 2 buffer space
-		nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
+		thread_local std::vector<ForwardPassRecord> records;
+		thread_local std::vector<const PathVertex*> nearbyVertices;
+		thread_local std::priority_queue<NearestPathVertex> maxHeap;
+		// records.reserve(10);                          // Max depth: 8, + 2 buffer space
+		// nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
+
+		// Clear from the previous pixel/bounce, but KEEP their memory capacity!
+		records.clear();
+		nearbyVertices.clear();
 
 		// Generate the path vertices in the forward pass (only populates the vector)
 		generatePathRecursive(r, 0, sampler, records, sTree, dTree, isGuidingPhase, nearbyVertices, maxHeap, stats);
 
 		// --- 2. Backpropagation Phase ---
 		// Store Each Path Vertex to the vector via Backpropagation
-		Colour incomingRadiance(0.f, 0.f, 0.f);
+		//Colour incomingRadiance(0.f, 0.f, 0.f);
 		Colour guidingRadiance(0.f, 0.f, 0.f);
 		for (int i = (int)(records.size() - 1); i >= 0; i--) {
 			if (!isGuidingPhase) {
@@ -659,7 +667,7 @@ public:
 			}
 			// Update the incoming and guiding radiance so that Li-1 can use this previous Li
 			Colour emissionAndDirect = enableNEE ? (records[i].misEmission + records[i].directLighting) : records[i].emission;
-			incomingRadiance = emissionAndDirect + (records[i].bsdfWeight * incomingRadiance);
+			//incomingRadiance = emissionAndDirect + (records[i].bsdfWeight * incomingRadiance);
 			guidingRadiance = emissionAndDirect + (records[i].bsdfWeight * guidingRadiance);
 			
 			// Just a way to deal with firefly artifacts and data poisoning
@@ -667,7 +675,7 @@ public:
 			float currentLuminance = guidingRadiance.Lum();
 			if (currentLuminance > MAX_FIREFLY_CLAMP) guidingRadiance = guidingRadiance * (MAX_FIREFLY_CLAMP / currentLuminance);
 		}
-		return incomingRadiance.isValid() ? incomingRadiance : Colour(0.f, 0.f, 0.f);
+		return guidingRadiance.isValid() ? guidingRadiance : Colour(0.f, 0.f, 0.f);
 	}
 
 	// --- NEW METHOD ---
@@ -740,7 +748,8 @@ public:
 
 			// Must run Path Guiding before calculating direct lighting
 			bool usePathGuiding = false;
-			if (isGuidingPhase && cache != nullptr && !isSpecular) {
+			float best_lobe_selection = sampler->next();
+			if (isGuidingPhase && cache != nullptr) {
 				// We are in the Path Guiding Phase
 				#if SEARCH_KNN
 				// BVH will do kNN Search when retrieving nearest vertices (faster)
@@ -753,7 +762,8 @@ public:
 				}
 
 				while (!maxHeap.empty()) {
-					nearbyVertices.push_back(maxHeap.top().vertex);
+					PathVertex* poppedVertex = maxHeap.top().vertex;
+					nearbyVertices.push_back(poppedVertex);
 					maxHeap.pop();
 				}
 				#else
@@ -799,27 +809,34 @@ public:
 				// QTree Building will be timed inside this scope
 				{
 					Timer qTreeBuildTimer(stats.qTreeBuildTimeMs);
+					float max_weight_seen = -1.f;
 					for (const auto* vertex : nearbyVertices) {
 						if (vertex == nullptr) continue;
-						if (Dot(shadingData.sNormal, vertex->normal) < 0.1f) continue;
+						float cosTheta = std::max(Dot(shadingData.sNormal, vertex->wi), 0.f);
+						if (cosTheta <= 0.1f) continue;
+						
+						float sqrtLum = std::sqrt(vertex->Li.Lum());
+						float weight = std::min(std::max(sqrtLum, 0.f), MAX_FIREFLY_CLAMP);
+						if (weight < EPSILON) continue;
 
 						// BSDF inversion to get u, v, and u_lobe
 						float u, v, u_lobe;
-
 						// BSDF Inversion will be timed inside this scope
 						{
-							Timer bsdfInvertTimer(stats.qTreeBuildTimeMs);
+							Timer bsdfInvertTimer(stats.bsdfInvertTimeMs);
 							shadingData.bsdf->invert(shadingData, vertex->wi, u, v, u_lobe);
 						}
 						// Timing completed
 						if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) continue;
 
 						// Insert into the QTree
-						float weight = std::max(std::min(vertex->Li.Lum(), MAX_FIREFLY_CLAMP), 0.f);
-						if (weight > 0.f) {
-							qTree.insert(u, v, weight);
-							totalInsertedWeight += weight;
-							acceptedVertices++;
+						qTree.insert(u, v, weight);
+						totalInsertedWeight += weight;
+						acceptedVertices++;
+
+						if (weight > max_weight_seen) {
+							max_weight_seen = weight;
+							best_lobe_selection = u_lobe;
 						}
 					}
 				}
@@ -840,7 +857,7 @@ public:
 				shadingData.bsdf->invert(shadingData, wi, u, v, u_lobe);
 
 				// If not valid u, return BSDF PDF
-				if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) return basePdf;
+				if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) return basePdf * BSDF_FRACTION;
 
 				// If inversion OK, return MIS combined PDF for Path Guiding
 				float qTreePdf = qTree.pdf(u, v);
@@ -872,14 +889,12 @@ public:
 					// Do Guided Sampling
 					float r1 = sampler->next();
 					float r2 = sampler->next();
-					float u_lobe_out = sampler->next();
-
 					float u_out = 0.f, v_out = 0.f, treePdfIgnored = 0.f;
 					qTree.sample(r1, r2, u_out, v_out, treePdfIgnored);
 
 					// Then do BSDF sampling with the new numbers obtained
 					GuidedPathSampler dummySampler;
-					dummySampler.set(u_out, v_out, u_lobe_out);
+					dummySampler.set(u_out, v_out, best_lobe_selection);
 					float pdfIgnored = 0.f;
 					wi = shadingData.bsdf->sample(shadingData, &dummySampler, fBsdf, pdfIgnored);
 				} else {
@@ -970,6 +985,135 @@ public:
 		return;
 	}
 	// --- Path Guiding Algorithm Work End ---
+
+	// --- PSS Debug ---
+	Colour viewPrimarySampleSpace(Ray& r, PointBVH* cache, int k) {
+		IntersectionData intersection = scene->traverse(r);
+		if (intersection.t < FLT_MAX) {
+			ShadingData shadingData = scene->calculateShadingData(intersection, r);
+			return visualisePSSMap(shadingData, cache, k);
+		}
+		return Colour(0.f, 0.f, 0.f);
+	}
+
+	Colour visualisePSSMap(ShadingData& shadingData, PointBVH* cache, int k) {
+		// Create debug structures
+		std::cout << "\[DEBUG] Generating Primary Sample Space Visualisation..." << std::endl;
+		std::priority_queue<NearestPathVertex> debugMaxHeap;
+		std::vector<const PathVertex*> debugNearbyVertices;
+		QTree debugQTree;
+
+		// Perform kNN Search
+		float debugRadiusSq = FLT_MAX;
+		cache->kNNSearch(shadingData.x, debugRadiusSq, debugMaxHeap, k);
+		while (!debugMaxHeap.empty()) {
+			const PathVertex* poppedDebugVertex = debugMaxHeap.top().vertex;
+			debugNearbyVertices.push_back(poppedDebugVertex);
+			debugMaxHeap.pop();
+		}
+
+		// Store uv's for plotting
+		std::vector<std::pair<float, float>> plottedPoints;
+
+		// BSDF Inversion and QTree Insertions
+		for (const auto* vertex : debugNearbyVertices) {
+			if (vertex == nullptr) continue;
+			if (Dot(shadingData.sNormal, vertex->wi) < 0.1) continue;
+
+			// BSDF Invert
+			float uDebug, vDebug, selectDebug;
+			shadingData.bsdf->invert(shadingData, vertex->wi, uDebug, vDebug, selectDebug);
+			if (uDebug < 0.f || uDebug > 1.f || vDebug < 0.f || vDebug > 1.f || std::isnan(uDebug) || std::isnan(vDebug)) continue;
+
+			// QTree Insert
+			float sqrtLum = std::sqrt(vertex->Li.Lum());
+			float weight = std::min(std::max(sqrtLum, 0.f), MAX_FIREFLY_CLAMP);
+			if (weight > 0.f) {
+				debugQTree.insert(uDebug, vDebug, weight);
+				plottedPoints.push_back({ uDebug, vDebug });
+			}
+		}
+		// Generate Image Buffer to Plot the Heat Map
+		// 512x512, RGB Channels, fill with zeroes first
+		const int SIZE = 512;
+		std::vector<unsigned char> buffer(SIZE * SIZE * 3, 0);
+		std::vector<unsigned char> bufferDefensive(SIZE * SIZE * 3, 0);
+		
+		// Draw the QTree as a grayscale heatmap
+		// Calculate maxPDF factor
+		float maxPdf = EPSILON;
+		for (int y = 0; y < SIZE; y++) {
+			for (int x = 0; x < SIZE; x++) {
+				float u = (x + 0.5f) / SIZE;
+				float v = (y + 0.5f) / SIZE;
+				float pdf = debugQTree.pdf(u, v);
+				maxPdf = std::max(pdf, maxPdf);
+			}
+		}
+
+		// Heat-Map Lambda Function as Helper Function
+		auto getHeatmapRGB = [](float t, unsigned char& r, unsigned char& g, unsigned char& b) {
+			float val = std::max(0.f, std::min(t, 1.f));
+			r = (unsigned char)(std::max(0.f, val * 255));
+			g = (unsigned char)(std::max(0.f, val * 255));
+			b = (unsigned char)(std::max(0.f, val * 255));
+		};
+
+		// Visualise
+		for (int y = 0; y < SIZE; y++) {
+			for (int x = 0; x < SIZE; x++) {
+				float u = (x + 0.5f) / SIZE;
+				float v = (y + 0.5f) / SIZE;
+
+				// Create Guided Sampler for dummy bsdf
+				GuidedPathSampler dummySampler;
+				dummySampler.set(u, v, 0.5f);
+
+				// Sample BSDF for Defensive Sampling Test
+				Colour dummyBsdf;
+				float dummyPdf;
+				shadingData.bsdf->sample(shadingData, &dummySampler, dummyBsdf, dummyPdf);
+
+				// Calculate PDF and Defensive PDF
+				float qTreePdfPSS = debugQTree.pdf(u, v);
+				float pdfDefensive = (BSDF_FRACTION * dummyPdf) + (QTREE_FRACTION * (dummyPdf * qTreePdfPSS));
+
+				// Normalize PDFs and Apply Gamma Correction
+				// BSDF is solid angle, QTree is PSS... need to multiply with Jacobian
+				float normPdf = std::pow(qTreePdfPSS / maxPdf, 1.f / 2.2f);
+				float normPdfDefensive = std::pow(pdfDefensive / (maxPdf * dummyPdf + EPSILON), 1.f / 2.2f);
+				
+				// Save the pixel into the buffer
+				int pixelIdx = ((SIZE - 1 - y) * SIZE + x) * 3;
+				getHeatmapRGB(normPdf, buffer[pixelIdx], buffer[pixelIdx + 1], buffer[pixelIdx + 2]);
+				getHeatmapRGB(normPdfDefensive, bufferDefensive[pixelIdx], bufferDefensive[pixelIdx + 1], bufferDefensive[pixelIdx + 2]);
+			}
+		}
+
+		// Draw the vertices
+		for (auto& p : plottedPoints) {
+			// Retrieve points from the pair
+			int px = std::min((int)(p.first * SIZE), SIZE - 1);
+			int py = std::min((int)(p.second * SIZE), SIZE - 1);
+
+			// Draw a 3x3 dot
+			for (int dy = -1; dy <= 1; ++dy) {
+				for (int dx = -1; dx <= 1; ++dx) {
+					int nx = px + dx, ny = py + dy;
+					if (nx >= 0 && nx < SIZE && ny >= 0 && ny < SIZE) {
+						int pixelIdx = ((SIZE - 1 - ny) * SIZE + nx) * 3;
+						buffer[pixelIdx] = 255; buffer[pixelIdx + 1] = 0; buffer[pixelIdx + 2] = 0;
+						bufferDefensive[pixelIdx] = 0; bufferDefensive[pixelIdx + 1] = 0; bufferDefensive[pixelIdx + 2] = 255;
+					}
+				}
+			}
+		}
+		// 8. Save the Image
+		stbi_write_png("pss_qtree_debug_map.png", SIZE, SIZE, 3, buffer.data(), SIZE * 3);
+		stbi_write_png("pss_defensive_debug_map.png", SIZE, SIZE, 3, bufferDefensive.data(), SIZE * 3);
+		std::cout << "[DEBUG] Saved Maps! Total plotted points: " << plottedPoints.size() << std::endl;
+	}
+	// --- PSS Debug End ---
 
 	Colour pathTraceRecursive(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		// Trace ray
@@ -1078,7 +1222,7 @@ public:
 		return Colour(0.f, 0.f, 0.f);
 	}
 
-	Colour viewBarycentrics(Ray & r) {
+	Colour viewBarycentrics(Ray& r) {
 		IntersectionData intersection = scene->traverse(r);
 		if (intersection.t < FLT_MAX) {
 			return Colour(fabsf(intersection.alpha), fabsf(intersection.beta), fabsf(intersection.gamma));
@@ -1134,7 +1278,12 @@ public:
 								// Colour col = direct(ray, &samplers[i]);
 
 								#if GUIDED_PATH
-								Colour col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
+								Colour col;
+								if (isGuidingPhase && getSPP() == learningThreshold && x == film->width / 2 && y == film->height / 2) {
+									col = viewPrimarySampleSpace(ray, cacheBVH, MAX_NEARBY_VERTICES);
+								} else {
+									col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
+								}
 								#else
 								Colour col = pathTrace(ray, &samplers[i]);
 								#endif

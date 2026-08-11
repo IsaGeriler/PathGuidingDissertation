@@ -148,11 +148,11 @@ if __name__ == "__main__":
     # Define the test case directories
     test_bases = [
         os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_128"),
-        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_128"),
-        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_256"),
-        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_256"),
-        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_512"),
-        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_512")
+        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_128")
+        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_256"),
+        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_256"),
+        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_512"),
+        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_512")
     ]
 
     # Populate the calculated results in a list

@@ -118,11 +118,11 @@ private:
 
 		if (!isRight) {
 			// Rescale r1 for the left child
-			r1 /= leftProbability;  
+			r1 = (leftProbability > 0.f) ? (r1 / leftProbability) : 0.5f;
 		} else {
 			// Rescale r1 for the right child
 			float rightProbability = 1.f - leftProbability;
-			r1 = (r1 - leftProbability) / rightProbability;  
+			r1 = (rightProbability > 0.f) ? ((r1 - leftProbability) / rightProbability) : 0.5f;
 		}
 
 		// V-Axis
@@ -146,11 +146,11 @@ private:
 
 		if (!isTop) {
 			// Rescale r2 for the bottom child
-			r2 /= bottomProbability;
+			r2 = (bottomProbability > 0.f) ? (r2 / bottomProbability) : 0.5f;
 		} else {
 			// Rescale r2 for the top child
 			float topProbability = 1.f - bottomProbability;
-			r2 = (r2 - bottomProbability) / topProbability;
+			r2 = (topProbability > 0.f) ? ((r2 - bottomProbability) / topProbability) : 0.5f;
 		}
 
 		// Clamp r1 and r2 to [0, 1)
@@ -238,11 +238,13 @@ public:
 	// Constructor & Destructor
 	QTree(int _maxDepth) {
 		maxDepth = _maxDepth;
+		nodePool.reserve(4096);
 		rootIndex = allocateNode();
 	}
 
 	QTree() {
-		maxDepth = 3;
+		maxDepth = 1;
+		nodePool.reserve(256);
 		rootIndex = allocateNode();
 	}
 
@@ -261,6 +263,8 @@ public:
 	}
 
 	void sample(float r1, float r2, float& u, float& v, float& pdf) {
+		r1 = std::max(0.f, std::min(r1, 0.99999f));
+		r2 = std::max(0.f, std::min(r2, 0.99999f));
 		if (nodePool[rootIndex].weight <= 0.f) { u = r1; v = r2; pdf = 1.f; return; }
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
