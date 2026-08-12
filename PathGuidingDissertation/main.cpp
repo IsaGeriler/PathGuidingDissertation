@@ -403,7 +403,7 @@ static void testNaNInFCatch() {
 }
 
 static void runAllQTreeTests() {
-	std::cout << "========================================" << std::endl;
+	std::cout << "\n========================================" << std::endl;
 	std::cout << "            START QTREE TESTS!          " << std::endl;
 	std::cout << "========================================" << std::endl;
 
@@ -447,9 +447,9 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
 	//std::string sceneName = "../Scenes/coffee";
-	//std::string sceneName = "../Scenes/cornell-box";
+	std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
-	std::string sceneName = "../Scenes/kitchen";
+	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
 	//std::string sceneName = "../Scenes/staircase";
@@ -546,7 +546,7 @@ int main(int argc, char* argv[]) {
 		rt.render();
 		float t = timer.dt();
 		// Write
-		std::cout << "Render Time Per Frame: " << t << "s" << std::endl;
+		std::cout << "SPP: " << rt.getSPP() << " | Render Time: " << t << " s / frame" << std::endl;
 		if (canvas.keyPressed('P')) {
 			rt.saveHDR(filename);
 		}

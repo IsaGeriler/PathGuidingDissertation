@@ -30,9 +30,13 @@
 #define GUIDED_PATH true
 #define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
+#define DEBUG_BVH false
 
 // Enable NEE or not for Incoming Radiance (Li)
 constexpr bool enableNEE = true;
+
+// Max Child Nodes That PointBVH Can Have
+static const int MAX_CHILDNODE_RECORDS = 16;
 
 // Defensive Sampling & Mixture
 static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
@@ -79,7 +83,7 @@ struct ForwardPassRecord {
 // Creating this struct for the max-heap part of my kNN-search
 struct NearestPathVertex {
 	float distanceSq;
-	PathVertex* vertex;
+	const PathVertex* vertex;
 	bool operator<(const NearestPathVertex& otherVertex) const { return this->distanceSq < otherVertex.distanceSq; }
 };
 // --- Struct definitions for Path Guiding Work End ---
@@ -118,48 +122,33 @@ struct Timer {
 
 // --- Spatial-Tree Component to Store PathVertex Caches ---
 struct PointBVHNode {
-	// Attributes
 	AABB bounds;
-	PointBVHNode* r;
-	PointBVHNode* l;
-	int offset = 0;
+	int leftFirst = 0;
 	int used = 0;
-
-	// Constructor
-	PointBVHNode() { l = nullptr; r = nullptr; }
-
-	// Destructor
-	~PointBVHNode() {
-		if (l != nullptr) { delete l; l = nullptr; }
-		if (r != nullptr) { delete r; r = nullptr; }
-	}
-
-	// Helper Method
-	bool isLeaf() const { return l == nullptr && r == nullptr; }
+	bool isLeaf() const { return used > 0; }
 };
 
 class PointBVH {
 private:
-	PointBVHNode* root;
+	std::vector<PointBVHNode> nodes;
 	std::vector<PathVertex> pathVertices;
-	const int MAX_CHILDNODE_RECORDS = 16;
 	double buildTime = 0.0;
 
-	void updateBounds(PointBVHNode* node) {
+	void updateBounds(int nodeIdx) {
 		// Reset the bounds
-		node->bounds.reset();
+		nodes[nodeIdx].bounds.reset();
 		// Extend the bounds according to the position vector
-		for (int i = node->offset; i < node->offset + node->used; i++) {
-			node->bounds.extend(pathVertices[i].position);
+		for (int first = nodes[nodeIdx].leftFirst, i = 0; i < nodes[nodeIdx].used; i++) {
+			nodes[nodeIdx].bounds.extend(pathVertices[first + i].position);
 		}
 	}
 	
-	void subdivide(PointBVHNode* node) {
+	void subdivide(int nodeIdx) {
 		// Return if the used node count exceeds max child node count
-		if (node->used <= MAX_CHILDNODE_RECORDS) return;
+		if (nodes[nodeIdx].used <= MAX_CHILDNODE_RECORDS) return;
 
 		// Get the extend vector from the AABB bounds
-		Vec4 extendVector = node->bounds.max - node->bounds.min;
+		Vec4 extendVector = nodes[nodeIdx].bounds.max - nodes[nodeIdx].bounds.min;
 
 		// Find the split axis
 		int ax = 0;
@@ -167,9 +156,9 @@ private:
 		if (extendVector.z > extendVector[ax]) ax = 2;
 
 		// Get the first, last, and nth element indexes
-		auto first = pathVertices.begin() + node->offset;
-		auto nth = pathVertices.begin() + node->offset + node->used / 2;
-		auto last = pathVertices.begin() + node->offset + node->used;
+		auto first = pathVertices.begin() + nodes[nodeIdx].leftFirst;
+		auto nth = pathVertices.begin() + nodes[nodeIdx].leftFirst + nodes[nodeIdx].used / 2;
+		auto last = pathVertices.begin() + nodes[nodeIdx].leftFirst + nodes[nodeIdx].used;
 
 		// From those indexes, sort elements via a comparator
 		std::nth_element(first, nth, last, 
@@ -180,95 +169,129 @@ private:
 		);
 
 		// Get the middle index
-		int middle = node->offset + node->used / 2;
-
-		// Create left child and assign the values to it's attributes
-		node->l = new PointBVHNode();
-		node->l->offset = node->offset;
-		node->l->used = node->used / 2;
-
-		// Create right child and assign the values to it's attributes
-		node->r = new PointBVHNode();
-		node->r->offset = middle;
-		node->r->used = node->used - node->used / 2;
+		int currentIndex = nodes[nodeIdx].leftFirst;
+		int currentUsed = nodes[nodeIdx].used;
+		int middleIndex = currentIndex + currentUsed / 2;
 
 		// Reset the node count for the parent
-		node->used = 0;
+		nodes[nodeIdx].used = 0;
+
+		// Get left child index
+		int leftChildIndex = nodes.size();
+		nodes[nodeIdx].leftFirst = leftChildIndex;
+
+		// Create left and right childs
+		PointBVHNode leftChild;
+		leftChild.leftFirst = currentIndex;
+		leftChild.used = currentUsed / 2;
+
+		PointBVHNode rightChild;
+		rightChild.leftFirst = middleIndex;
+		rightChild.used = currentUsed - leftChild.used;
+
+		// Push back into the list
+		nodes.push_back(leftChild);
+		nodes.push_back(rightChild);
 
 		// Update AABB bounds
-		updateBounds(node->l);
-		updateBounds(node->r);
+		updateBounds(leftChildIndex);
+		updateBounds(leftChildIndex + 1);
 
 		// Subdivide the tree
-		subdivide(node->l);
-		subdivide(node->r);
+		subdivide(leftChildIndex);
+		subdivide(leftChildIndex + 1);
 	}
 
-	int validateNode(const PointBVHNode* node, int depth) const {
+	int validateNode(int nodeIdx, int depth) const {
+		// Retrieve the current node
+		const PointBVHNode& node = nodes[nodeIdx];
+
 		// Check for leaf node case
-		if (node->isLeaf()) {
+		if (node.isLeaf()) {
 			// Check if we have more used records than the max amount
-			assert(node->used <= MAX_CHILDNODE_RECORDS && "Leaf carries records over capacity");
+			assert(node.used <= MAX_CHILDNODE_RECORDS && "Leaf carries records over capacity");
 			// Check if the record positions are inside the bounding box or not
-			for (int i = node->offset; i < node->offset + node->used; i++) {
-				assert(node->bounds.containsPoint(pathVertices[i].position, EPSILON) && "Record outside of its leaf's bounding box.");
+			for (int first = node.leftFirst, i = 0; i < node.used; i++) {
+				assert(node.bounds.containsPoint(pathVertices[i].position, EPSILON) && "Record outside of its leaf's bounding box.");
 			}
-			return node->used;
+			return node.used;
 		}
+		// Get left and right child indexes
+		int leftChildIndex = node.leftFirst;
+		int rightChildIndex = node.leftFirst + 1;
+
 		// Handle not leaf node case
-		assert(node->used == 0 && "Parent node is abruptly carrying records");
-		assert(node->l != nullptr && node->r != nullptr && "Parent node is missing a child node");
-		assert(node->bounds.containsAABB(node->l->bounds, EPSILON) && "Left child's bounding box is not in parent bounding box.");
-		assert(node->bounds.containsAABB(node->r->bounds, EPSILON) && "Right child's bounding box is not in parent bounding box.");
-		return validateNode(node->l, depth + 1) + validateNode(node->r, depth + 1);
+		assert(node.used == 0 && "Parent node is abruptly carrying records");
+		// assert(node->l != nullptr && node->r != nullptr && "Parent node is missing a child node");
+		assert(node.bounds.containsAABB(nodes[leftChildIndex].bounds, EPSILON) && "Left child's bounding box is not in parent bounding box.");
+		assert(node.bounds.containsAABB(nodes[rightChildIndex].bounds, EPSILON) && "Right child's bounding box is not in parent bounding box.");
+		return validateNode(leftChildIndex, depth + 1) + validateNode(rightChildIndex, depth + 1);
 	}
 
-	void statsNode(const PointBVHNode* node, PointBVHNodeStats& bvhStats, int depth) {
+	void statsNode(int nodeIdx, PointBVHNodeStats& bvhStats, int depth) {
+		// Retrieve the current node
+		const PointBVHNode& node = nodes[nodeIdx];
+
+		// Update the node count and memory used
 		bvhStats.nodeCount++;
 		bvhStats.memoryInBytes += sizeof(PointBVHNode);
+
 		// Check if leaf node
-		if (node->isLeaf()) {
+		if (node.isLeaf()) {
+			// Update rest of the profiler stats
 			bvhStats.leafNodeCount++;
 			bvhStats.minLeafDepth = std::min(bvhStats.minLeafDepth, depth);
 			bvhStats.maxLeafDepth = std::max(bvhStats.maxLeafDepth, depth);
 			bvhStats.sumLeafDepth += depth;
 			return;
 		}
+		// Get left and right child indexes
+		int leftChildIndex = node.leftFirst;
+		int rightChildIndex = node.leftFirst + 1;
+
 		// Recurse through the child nodes
-		if (node->l != nullptr) statsNode(node->l, bvhStats, depth + 1);
-		if (node->r != nullptr) statsNode(node->r, bvhStats, depth + 1);
+		statsNode(leftChildIndex, bvhStats, depth + 1);
+		statsNode(rightChildIndex, bvhStats, depth + 1);
 	}
 
-	void radiusSearchNode(const PointBVHNode* node, Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices) {
+	void radiusSearchNode(int nodeIdx, Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices) {
+		// Retrieve the current node
+		const PointBVHNode& node = nodes[nodeIdx];
+
 		// Find the closest point in the AABB
 		Vec4 closestPoint;
-		closestPoint.x = std::max(std::min(hitPosition.x, node->bounds.max.x), node->bounds.min.x);
-		closestPoint.y = std::max(std::min(hitPosition.y, node->bounds.max.y), node->bounds.min.y);
-		closestPoint.z = std::max(std::min(hitPosition.z, node->bounds.max.z), node->bounds.min.z);
+		closestPoint.x = std::max(std::min(hitPosition.x, node.bounds.max.x), node.bounds.min.x);
+		closestPoint.y = std::max(std::min(hitPosition.y, node.bounds.max.y), node.bounds.min.y);
+		closestPoint.z = std::max(std::min(hitPosition.z, node.bounds.max.z), node.bounds.min.z);
 
 		// Calculate distance square to prevent sqrt and omit the ones less than radiusSq
 		float distanceSq = (SQ(closestPoint.x - hitPosition.x) + SQ(closestPoint.y - hitPosition.y) + SQ(closestPoint.z - hitPosition.z));
 		if (distanceSq > radiusSq) return;
 
-		if (node->isLeaf()) {
-			for (int i = node->offset; i < node->offset + node->used; i++) {
-				const PathVertex& vertex = pathVertices[i];
+		if (node.isLeaf()) {
+			for (int first = node.leftFirst, i = 0; i < node.used; i++) {
+				const PathVertex& vertex = pathVertices[first + i];
 				float distanceSq2 = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
 				if (distanceSq2 <= radiusSq) nearbyVertices.push_back(&vertex);
 			}
 			return;
 		}
-		else {
-			if (node->l != nullptr) radiusSearchNode(node->l, hitPosition, radiusSq, nearbyVertices);
-			if (node->r != nullptr) radiusSearchNode(node->r, hitPosition, radiusSq, nearbyVertices);
-		}
+
+		// Get left and right child indexes
+		int leftChildIndex = node.leftFirst;
+		int rightChildIndex = node.leftFirst + 1;
+		
+		// Recurse
+		radiusSearchNode(leftChildIndex, hitPosition, radiusSq, nearbyVertices);
+		radiusSearchNode(rightChildIndex, hitPosition, radiusSq, nearbyVertices);
 	}
 
-	void kNNSearchNode(const PointBVHNode* node, Vec4 hitPosition, float& dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
+	void kNNSearchNode(int nodeIdx, Vec4 hitPosition, float& dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
+		const PointBVHNode& node = nodes[nodeIdx];
 		// We are in the leaf node of the list, can search now
-		if (node->isLeaf()) {
-			for (int i = node->offset; i < node->offset + node->used; i++) {
-				PathVertex& vertex = pathVertices[i];
+		if (node.isLeaf()) {
+			for (int first = node.leftFirst, i = 0; i < node.used; i++) {
+				const PathVertex& vertex = pathVertices[first + i];
 				float distanceSq = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
 				if (distanceSq < dynamicRadiusSq || maxHeap.size() < k) {
 					// Push the new nearest vertex in the heap
@@ -283,85 +306,79 @@ private:
 			return;
 		}
 
-		// We are not in the leaf, calculate left and right child distance
-		float distanceSqLeftChild = FLT_MAX;
-		float distanceSqRightChild = FLT_MAX;
-		if (node->l != nullptr) {
-			Vec4 leftClosestPoint;
-			leftClosestPoint.x = std::max(std::min(hitPosition.x, node->l->bounds.max.x), node->l->bounds.min.x);
-			leftClosestPoint.y = std::max(std::min(hitPosition.y, node->l->bounds.max.y), node->l->bounds.min.y);
-			leftClosestPoint.z = std::max(std::min(hitPosition.z, node->l->bounds.max.z), node->l->bounds.min.z);
-			distanceSqLeftChild = (SQ(leftClosestPoint.x - hitPosition.x) + SQ(leftClosestPoint.y - hitPosition.y) + SQ(leftClosestPoint.z - hitPosition.z));
-		}
+		// Get left and right child indexes
+		int leftChildIndex = node.leftFirst;
+		int rightChildIndex = node.leftFirst + 1;
 
-		if (node->r != nullptr) {
-			Vec4 rightClosestPoint;
-			rightClosestPoint.x = std::max(std::min(hitPosition.x, node->r->bounds.max.x), node->r->bounds.min.x);
-			rightClosestPoint.y = std::max(std::min(hitPosition.y, node->r->bounds.max.y), node->r->bounds.min.y);
-			rightClosestPoint.z = std::max(std::min(hitPosition.z, node->r->bounds.max.z), node->r->bounds.min.z);
-			distanceSqRightChild = (SQ(rightClosestPoint.x - hitPosition.x) + SQ(rightClosestPoint.y - hitPosition.y) + SQ(rightClosestPoint.z - hitPosition.z));
-		}
+		// We are not in the leaf, calculate left and right child distance
+		Vec4 leftClosestPoint;
+		leftClosestPoint.x = std::max(std::min(hitPosition.x, nodes[leftChildIndex].bounds.max.x), nodes[leftChildIndex].bounds.min.x);
+		leftClosestPoint.y = std::max(std::min(hitPosition.y, nodes[leftChildIndex].bounds.max.y), nodes[leftChildIndex].bounds.min.y);
+		leftClosestPoint.z = std::max(std::min(hitPosition.z, nodes[leftChildIndex].bounds.max.z), nodes[leftChildIndex].bounds.min.z);
+		float distanceSqLeftChild = (SQ(leftClosestPoint.x - hitPosition.x) + SQ(leftClosestPoint.y - hitPosition.y) + SQ(leftClosestPoint.z - hitPosition.z));
+
+		Vec4 rightClosestPoint;
+		rightClosestPoint.x = std::max(std::min(hitPosition.x, nodes[rightChildIndex].bounds.max.x), nodes[rightChildIndex].bounds.min.x);
+		rightClosestPoint.y = std::max(std::min(hitPosition.y, nodes[rightChildIndex].bounds.max.y), nodes[rightChildIndex].bounds.min.y);
+		rightClosestPoint.z = std::max(std::min(hitPosition.z, nodes[rightChildIndex].bounds.max.z), nodes[rightChildIndex].bounds.min.z);
+		float distanceSqRightChild = (SQ(rightClosestPoint.x - hitPosition.x) + SQ(rightClosestPoint.y - hitPosition.y) + SQ(rightClosestPoint.z - hitPosition.z));
 		
 		// Branch to decide which child is the closest, and what order to traverse
 		if (distanceSqLeftChild < distanceSqRightChild) {
 			// Left Child is more closer, traverse left first and then right
-			if (node->l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) kNNSearchNode(node->l, hitPosition, dynamicRadiusSq, maxHeap, k);
-			if (node->r != nullptr && distanceSqRightChild <= dynamicRadiusSq) kNNSearchNode(node->r, hitPosition, dynamicRadiusSq, maxHeap, k);
+			if (distanceSqLeftChild <= dynamicRadiusSq) kNNSearchNode(leftChildIndex, hitPosition, dynamicRadiusSq, maxHeap, k);
+			if (distanceSqRightChild <= dynamicRadiusSq) kNNSearchNode(rightChildIndex, hitPosition, dynamicRadiusSq, maxHeap, k);
 		} else {
 			// Right Child is more closer, traverse right first and then left
-			if (node->r != nullptr && distanceSqRightChild <= dynamicRadiusSq) kNNSearchNode(node->r, hitPosition, dynamicRadiusSq, maxHeap, k);
-			if (node->l != nullptr && distanceSqLeftChild <= dynamicRadiusSq) kNNSearchNode(node->l, hitPosition, dynamicRadiusSq, maxHeap, k);
+			if (distanceSqRightChild <= dynamicRadiusSq) kNNSearchNode(rightChildIndex, hitPosition, dynamicRadiusSq, maxHeap, k);
+			if (distanceSqLeftChild <= dynamicRadiusSq) kNNSearchNode(leftChildIndex, hitPosition, dynamicRadiusSq, maxHeap, k);
 		}
 	}
 public:
-	// Constructor
-	PointBVH() { root = nullptr; }
-
-	// Destructor
-	~PointBVH() { if (root != nullptr) { delete root; root = nullptr; } }
-
 	// Public Methods
 	void build(std::vector<PathVertex>&& inputPathVertices) {
 		// Handle degenerate case where the passed vector is empty
 		if (inputPathVertices.empty()) return;
 		pathVertices = std::move(inputPathVertices);
 
-		// If root not null, delete it
-		if (root != nullptr) { delete root; root = nullptr; }
+		nodes.clear();
+		size_t allocatedNodeSpace = 4 * (pathVertices.size() / MAX_CHILDNODE_RECORDS) + 1;
+		nodes.reserve(allocatedNodeSpace);
 
 		// Initialize root
-		root = new PointBVHNode();
-		root->offset = 0;
-		root->used = (int)pathVertices.size();
+		int rootIdx = 0;
+		nodes.push_back(PointBVHNode());
+		nodes[rootIdx].leftFirst = 0;
+		nodes[rootIdx].used = (int)(pathVertices.size());
 
 		// Time the build time using chrono
 		auto start = std::chrono::high_resolution_clock::now();
 
 		// Update bounds and subdivide the root node
-		updateBounds(root);
-		subdivide(root);
+		updateBounds(rootIdx);
+		subdivide(rootIdx);
 
 		// End the timing
 		auto end = std::chrono::high_resolution_clock::now();
 
 		// Save the build time, and call validate and stats
 		buildTime = std::chrono::duration<double, std::milli>(end - start).count();
-		validate(root);
-		stats(root);
+		#if DEBUG_BVH
+		validate(rootIdx);
+		stats(rootIdx);
+		#endif
 	}
 
-	void validate(const PointBVHNode* node) {
+	void validate(int nodeIdx) {
 		// Start from the root node, depth at 0
-		if (node != nullptr) {
-			int counted = validateNode(node, 0);
-			assert(counted == (int)(pathVertices.size()) && "Records lost or duplicated during the build phase.");
-		}
+		int counted = validateNode(nodeIdx, 0);
+		assert(counted == (int)(pathVertices.size()) && "Records lost or duplicated during the build phase.");
 	}
 
-	PointBVHNodeStats stats(const PointBVHNode* node) {
+	PointBVHNodeStats stats(int nodeIdx) {
 		PointBVHNodeStats bvhStats;
 		bvhStats.memoryInBytes = pathVertices.size() * sizeof(PathVertex);
-		statsNode(node, bvhStats, 0);
+		statsNode(nodeIdx, bvhStats, 0);
 		bvhStats.buildTimeMs = buildTime;
 		std::cout << "PointBVHNode["
 			<< "\n  -- path vertex records: " << pathVertices.size()
@@ -369,20 +386,24 @@ public:
 			<< "\n  -- leaf nodes: " << bvhStats.leafNodeCount
 			<< "\n  -- depth: " << bvhStats.minLeafDepth << "-" << bvhStats.maxLeafDepth
 			<< " (mean " << (double)bvhStats.sumLeafDepth / (double)bvhStats.leafNodeCount << ")"
-			<< "\n  -- size: " << bvhStats.memoryInBytes / SQ(1024.0) << "MB"
-			<< "\n  -- build time: " << bvhStats.buildTimeMs << "ms\n]\n";
+			<< "\n  -- size: " << bvhStats.memoryInBytes / SQ(1024.0) << " MB"
+			<< "\n  -- build time: " << bvhStats.buildTimeMs << " ms\n]\n";
 		return bvhStats;
 	}
 
 	// --- New Method ---
 	void radiusSearch(Vec4 hitPosition, float radiusSq, std::vector<const PathVertex*>& nearbyVertices) {
 		// Start the radius search from the root
-		if (root != nullptr) radiusSearchNode(root, hitPosition, radiusSq, nearbyVertices);
+		if (nodes.empty()) return;
+		int rootIdx = 0;
+		radiusSearchNode(rootIdx, hitPosition, radiusSq, nearbyVertices);
 	}
 
 	void kNNSearch(Vec4 hitPosition, float dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
 		// Start the kNN search from the root
-		if (root != nullptr) kNNSearchNode(root, hitPosition, dynamicRadiusSq, maxHeap, k);
+		if (nodes.empty()) return;
+		int rootIdx = 0;
+		kNNSearchNode(rootIdx, hitPosition, dynamicRadiusSq, maxHeap, k);
 	}
 };
 // --- Spatial-Tree Component to Store PathVertex Caches End ---
@@ -738,7 +759,7 @@ public:
 				}
 
 				while (!maxHeap.empty()) {
-					PathVertex* poppedVertex = maxHeap.top().vertex;
+					const PathVertex* poppedVertex = maxHeap.top().vertex;
 					nearbyVertices.push_back(poppedVertex);
 					maxHeap.pop();
 				}
