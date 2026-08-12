@@ -7,7 +7,8 @@
 #include <cassert>
 #include <string.h>
 
-#define SQ(x)(x * x)
+// Fixing this define -> e.g. SQ(vertex.position.x - hitPosition.x)
+#define SQ(x)((x) * (x))
 
 #pragma warning(disable : 4244)  // Stop warnings about M_PI being a double
 

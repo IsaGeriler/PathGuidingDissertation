@@ -235,22 +235,17 @@ private:
 		return pdfRecursive(nodePool[nodeIndex].children[index], u, v, childrenBox, depth + 1, currentPdf);
 	}
 public:
-	// Constructor & Destructor
-	QTree(int _maxDepth) {
+	// Constructor (Default included)
+	QTree(int _maxDepth = 2) {
 		maxDepth = _maxDepth;
-		nodePool.reserve(4096);
-		rootIndex = allocateNode();
-	}
-
-	QTree() {
-		maxDepth = 1;
-		nodePool.reserve(256);
+		size_t nodeCount = (pow(4, maxDepth + 1) - 1) / 3;
+		nodePool.reserve(nodeCount);
 		rootIndex = allocateNode();
 	}
 
 	// Methods
 	void insert(float u, float v, float luminance) {
-		if (!(luminance > 0.f) || std::isnan(luminance) || std::isinf(luminance) || u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return;
+		if (!(luminance > 0.f) || std::isnan(luminance) || std::isinf(luminance) || u < 0.f || u > 1.f || v < 0.f || v > 1.f) return;
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;
@@ -274,7 +269,7 @@ public:
 
 	float pdf(float u, float v) {
 		if (nodePool[rootIndex].weight <= 0.f) return 1.f;
-		if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return 0.f;
+		if (u < 0.f || u > 1.f || v < 0.f || v > 1.f) return 0.f;
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;

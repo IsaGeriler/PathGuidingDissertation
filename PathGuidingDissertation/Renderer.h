@@ -27,7 +27,7 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define GUIDED_PATH false
+#define GUIDED_PATH true
 #define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
 
@@ -80,7 +80,7 @@ struct ForwardPassRecord {
 struct NearestPathVertex {
 	float distanceSq;
 	PathVertex* vertex;
-	bool operator<(const NearestPathVertex& otherVertex) const { return distanceSq < otherVertex.distanceSq; }
+	bool operator<(const NearestPathVertex& otherVertex) const { return this->distanceSq < otherVertex.distanceSq; }
 };
 // --- Struct definitions for Path Guiding Work End ---
 
@@ -270,24 +270,14 @@ private:
 			for (int i = node->offset; i < node->offset + node->used; i++) {
 				PathVertex& vertex = pathVertices[i];
 				float distanceSq = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
-				if (distanceSq <= dynamicRadiusSq) {
-					// Heap isn't full
+				if (distanceSq < dynamicRadiusSq || maxHeap.size() < k) {
+					// Push the new nearest vertex in the heap
 					NearestPathVertex nearestVertex{ distanceSq, &vertex };
-					if (maxHeap.size() < k) {
-						// Push the new nearest vertex in the heap
-						maxHeap.push(nearestVertex);
-						// Adjust the radius if the heap is full
-						if (maxHeap.size() == k) dynamicRadiusSq = maxHeap.top().distanceSq;
-					}
-					// Heap is full
-					else {
-						// Pop the furthest nearest vertex along the heap
-						maxHeap.pop();
-						// Push the new nearest vertex in the heap
-						maxHeap.push(nearestVertex);
-						// Shrink radius size
-						dynamicRadiusSq = maxHeap.top().distanceSq;
-					}
+					maxHeap.push(nearestVertex);
+					// If we exceed k, discard immediately
+					if (maxHeap.size() > k)	maxHeap.pop();
+					// Adjust the radius if the heap is full
+					if (maxHeap.size() == k) dynamicRadiusSq = maxHeap.top().distanceSq;
 				}
 			}
 			return;
@@ -798,8 +788,8 @@ public:
 					// float max_weight_seen = -1.f;
 					for (const auto* vertex : nearbyVertices) {
 						if (vertex == nullptr) continue;
-						float cosTheta = std::max(Dot(shadingData.sNormal, vertex->wi), 0.f);
-						if (cosTheta <= 0.1f) continue;
+						float cosTheta = Dot(shadingData.sNormal, vertex->wi);
+						if (cosTheta < 0.f) continue;
 						
 						float sqrtLum = std::sqrt(vertex->Li.Lum());
 						float weight = std::max(sqrtLum, 0.f);
@@ -967,16 +957,15 @@ public:
 	// --- Path Guiding Algorithm Work End ---
 
 	// --- PSS Debug ---
-	Colour viewPrimarySampleSpace(Ray& r, PointBVH* cache, int k) {
+	void viewPrimarySampleSpace(Ray& r, PointBVH* cache, int k) {
 		IntersectionData intersection = scene->traverse(r);
 		if (intersection.t < FLT_MAX) {
 			ShadingData shadingData = scene->calculateShadingData(intersection, r);
 			return visualisePSSMap(shadingData, cache, k);
 		}
-		return Colour(0.f, 0.f, 0.f);
 	}
 
-	Colour visualisePSSMap(ShadingData& shadingData, PointBVH* cache, int k) {
+	void visualisePSSMap(ShadingData& shadingData, PointBVH* cache, int k) {
 		// Create debug structures
 		std::cout << "\[DEBUG] Generating Primary Sample Space Visualisation..." << std::endl;
 		std::priority_queue<NearestPathVertex> debugMaxHeap;
@@ -998,7 +987,7 @@ public:
 		// BSDF Inversion and QTree Insertions
 		for (const auto* vertex : debugNearbyVertices) {
 			if (vertex == nullptr) continue;
-			if (Dot(shadingData.sNormal, vertex->wi) < 0.1) continue;
+			if (Dot(shadingData.sNormal, vertex->wi) < 0.f) continue;
 
 			// BSDF Invert
 			float uDebug, vDebug, selectDebug;
@@ -1034,9 +1023,9 @@ public:
 		// Heat-Map Lambda Function as Helper Function
 		auto getHeatmapRGB = [](float t, unsigned char& r, unsigned char& g, unsigned char& b) {
 			float val = std::max(0.f, std::min(t, 1.f));
-			r = (unsigned char)(std::max(0.f, val * 255));
-			g = (unsigned char)(std::max(0.f, val * 255));
-			b = (unsigned char)(std::max(0.f, val * 255));
+			r = (unsigned char)(std::max(0.f, val * 255.f));
+			g = (unsigned char)(std::max(0.f, val * 255.f));
+			b = (unsigned char)(std::max(0.f, val * 255.f));
 		};
 
 		// Visualise
@@ -1255,11 +1244,9 @@ public:
 								// Colour col = direct(ray, &samplers[i]);
 
 								#if GUIDED_PATH
-								Colour col;
+								Colour col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
 								if (isGuidingPhase && getSPP() == learningThreshold && x == film->width / 2 && y == film->height / 2) {
-									col = viewPrimarySampleSpace(ray, cacheBVH, MAX_NEARBY_VERTICES);
-								} else {
-									col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
+									viewPrimarySampleSpace(ray, cacheBVH, MAX_NEARBY_VERTICES);
 								}
 								#else
 								Colour col = pathTrace(ray, &samplers[i]);

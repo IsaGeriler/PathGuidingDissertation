@@ -126,6 +126,7 @@ def evaluate_scene(test_name, gt_base_path, test_base_path):
         "Scene": test_name,
         "Method": parts[1],
         "SPP": int(parts[2]),
+        "QTree Depth": int(parts[3]) if len(parts) > 3 and parts[3] else "-",
         "MSE": mse_val,
         "RMSE": rmse_val,
         "MRSE": mrse_val,
@@ -150,10 +151,11 @@ if __name__ == "__main__":
     test_bases = [
         # os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBox_PathGuide_128"),
         # os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBox_PathTrace_128")
+        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "CornellBox_PathGuide_128_2"),
+        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "CornellBox_PathTrace_128")
         os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_128"),
+        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuideNew_128"),
         os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_128")
-        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_256"),
-        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_256"),
         #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_512"),
         #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_512")
     ]
