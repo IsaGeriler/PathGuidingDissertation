@@ -26,12 +26,8 @@
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define __STDC_LIB_EXT1__
-#include "ThirdParty/stb/stb_image_write.h"
-
 // --- Constants for Path Guiding Algortihm ---
-#define GUIDED_PATH true
+#define GUIDED_PATH false
 #define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
 
@@ -43,7 +39,6 @@ static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
 static const int MIN_ACCEPTED_INSERTIONS = 32;  // Aim between 16-64
 static const float BSDF_FRACTION = 0.5f;
 static const float QTREE_FRACTION = 0.5f;
-static const float MAX_FIREFLY_CLAMP = 10.f;    // Adjust as needed, but probably between 10-50 (or 100)
 // --- Constants for Path Guiding Algortihm End ---
 
 struct ScreenTile {
@@ -74,15 +69,15 @@ struct ForwardPassRecord {
 	Vec4 wi;				   // Incoming Direction
 
 	Colour bsdfWeight;		   // = (fBsdf * cosTheta) / (pdfBsdf * rrp)
-	Colour directLighting;	   // Next Event Estimation
+	Colour directLighting;	   // Direct Lighting w/NEE (Next Event Estimation)
 	Colour emission;		   // Unweighted emitted colour
 	Colour misEmission;		   // MIS weight applied to emitted colour
 
 	bool storeRecord = false;  // Do not store if previous surface is pure specular
 };
 
+// Creating this struct for the max-heap part of my kNN-search
 struct NearestPathVertex {
-	// Creating this struct for the max-heap part of my kNN-search
 	float distanceSq;
 	PathVertex* vertex;
 	bool operator<(const NearestPathVertex& otherVertex) const { return distanceSq < otherVertex.distanceSq; }
@@ -93,7 +88,7 @@ struct PointBVHNodeStats {
 	int nodeCount = 0, leafNodeCount = 0;
 	int minLeafDepth = INT_MAX, maxLeafDepth = -INT_MAX;
 	long long sumLeafDepth = 0;
-	size_t memory_in_bytes = 0;
+	size_t memoryInBytes = 0;
 	double buildTimeMs = 0.0;
 };
 // --- Struct definitions for Path Guiding Work End ---
@@ -230,7 +225,7 @@ private:
 
 	void statsNode(const PointBVHNode* node, PointBVHNodeStats& bvhStats, int depth) {
 		bvhStats.nodeCount++;
-		bvhStats.memory_in_bytes += sizeof(PointBVHNode);
+		bvhStats.memoryInBytes += sizeof(PointBVHNode);
 		// Check if leaf node
 		if (node->isLeaf()) {
 			bvhStats.leafNodeCount++;
@@ -269,7 +264,6 @@ private:
 		}
 	}
 
-	// Umm... will try to implement a kNN search by using max heap instead of radius based search
 	void kNNSearchNode(const PointBVHNode* node, Vec4 hitPosition, float& dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap, int k) {
 		// We are in the leaf node of the list, can search now
 		if (node->isLeaf()) {
@@ -376,7 +370,7 @@ public:
 
 	PointBVHNodeStats stats(const PointBVHNode* node) {
 		PointBVHNodeStats bvhStats;
-		bvhStats.memory_in_bytes = pathVertices.size() * sizeof(PathVertex);
+		bvhStats.memoryInBytes = pathVertices.size() * sizeof(PathVertex);
 		statsNode(node, bvhStats, 0);
 		bvhStats.buildTimeMs = buildTime;
 		std::cout << "PointBVHNode["
@@ -385,7 +379,7 @@ public:
 			<< "\n  -- leaf nodes: " << bvhStats.leafNodeCount
 			<< "\n  -- depth: " << bvhStats.minLeafDepth << "-" << bvhStats.maxLeafDepth
 			<< " (mean " << (double)bvhStats.sumLeafDepth / (double)bvhStats.leafNodeCount << ")"
-			<< "\n  -- size: " << bvhStats.memory_in_bytes / SQ(1024.0) << "MB"
+			<< "\n  -- size: " << bvhStats.memoryInBytes / SQ(1024.0) << "MB"
 			<< "\n  -- build time: " << bvhStats.buildTimeMs << "ms\n]\n";
 		return bvhStats;
 	}
@@ -487,6 +481,7 @@ public:
 
 				// Calculate Weight for MIS
 				float pALight = pdfLight * pmfLight;
+				if (pALight <= 1e-8f) return Colour(0.f, 0.f, 0.f);
 				float pABsdf = pdfBsdf * cosThetaPrime / denominator;
 				float wd = weightPowerHeuristics(pALight, pABsdf);
 
@@ -520,6 +515,7 @@ public:
 				// Evaluate pALight and pABsdf for MIS
 				// cosTheta is pretty much geometry term for Environment Mapping so pdfBsdf turns into pABsdf
 				float pALight = pdfLight * pmfLight;
+				if (pALight <= 1e-8f) return Colour(0.f, 0.f, 0.f);
 				float pABsdf = shadingData.bsdf->PDF(shadingData, wi);
 				
 				// Calculate Weight for MIS
@@ -586,6 +582,7 @@ public:
 
 				// Calculate Weight for MIS
 				float pALight = pdfLight * pmfLight;
+				if (pALight <= 1e-8f) return Colour(0.f, 0.f, 0.f);
 				float pABsdf = pdfBsdf * cosThetaPrime / denominator;
 				float wd = weightPowerHeuristics(pALight, pABsdf);
 
@@ -619,6 +616,7 @@ public:
 				// Evaluate pALight and pABsdf for MIS
 				// cosTheta is pretty much geometry term for Environment Mapping so pdfBsdf turns into pABsdf
 				float pALight = pdfLight * pmfLight;
+				if (pALight <= 1e-8f) return Colour(0.f, 0.f, 0.f);
 
 				// It was shadingData.bsdf->PDF() at first, but when guiding the paths
 				// this may cause pdf mismatches. So this is an attempt to fix it
@@ -639,10 +637,10 @@ public:
 		thread_local std::vector<ForwardPassRecord> records;
 		thread_local std::vector<const PathVertex*> nearbyVertices;
 		thread_local std::priority_queue<NearestPathVertex> maxHeap;
-		// records.reserve(10);                          // Max depth: 8, + 2 buffer space
-		// nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
-
-		// Clear from the previous pixel/bounce, but KEEP their memory capacity!
+		records.reserve(10);                          // Max depth: 8, + 2 buffer space
+		nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
+		
+		// Clear these vectors from the previous bounce just in case
 		records.clear();
 		nearbyVertices.clear();
 
@@ -651,7 +649,6 @@ public:
 
 		// --- 2. Backpropagation Phase ---
 		// Store Each Path Vertex to the vector via Backpropagation
-		//Colour incomingRadiance(0.f, 0.f, 0.f);
 		Colour guidingRadiance(0.f, 0.f, 0.f);
 		for (int i = (int)(records.size() - 1); i >= 0; i--) {
 			if (!isGuidingPhase) {
@@ -667,13 +664,7 @@ public:
 			}
 			// Update the incoming and guiding radiance so that Li-1 can use this previous Li
 			Colour emissionAndDirect = enableNEE ? (records[i].misEmission + records[i].directLighting) : records[i].emission;
-			//incomingRadiance = emissionAndDirect + (records[i].bsdfWeight * incomingRadiance);
 			guidingRadiance = emissionAndDirect + (records[i].bsdfWeight * guidingRadiance);
-			
-			// Just a way to deal with firefly artifacts and data poisoning
-			// I think max luminance should be somewhere between 10 and 50...
-			float currentLuminance = guidingRadiance.Lum();
-			if (currentLuminance > MAX_FIREFLY_CLAMP) guidingRadiance = guidingRadiance * (MAX_FIREFLY_CLAMP / currentLuminance);
 		}
 		return guidingRadiance.isValid() ? guidingRadiance : Colour(0.f, 0.f, 0.f);
 	}
@@ -720,14 +711,9 @@ public:
 						float pALight = pdfLight * pmfLight;
 						float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
 
-						// Handle degenerate pALight and pABsdf
-						if (pALight > 0.f && pABsdf > 0.f) {
-							// Calculate Weight for MIS
-							float wind = weightPowerHeuristics(pABsdf, pALight);
-							record.misEmission = emittedColour * wind;
-						} else {
-							record.misEmission = emittedColour;
-						}
+						// Calculate Weight for MIS
+						float wind = weightPowerHeuristics(pABsdf, pALight);
+						record.misEmission = emittedColour * wind;
 					}
 				}
 				records.push_back(record);
@@ -749,7 +735,7 @@ public:
 			// Must run Path Guiding before calculating direct lighting
 			bool usePathGuiding = false;
 			float best_lobe_selection = sampler->next();
-			if (isGuidingPhase && cache != nullptr) {
+			if (isGuidingPhase && cache != nullptr && !isSpecular) {
 				// We are in the Path Guiding Phase
 				#if SEARCH_KNN
 				// BVH will do kNN Search when retrieving nearest vertices (faster)
@@ -809,14 +795,14 @@ public:
 				// QTree Building will be timed inside this scope
 				{
 					Timer qTreeBuildTimer(stats.qTreeBuildTimeMs);
-					float max_weight_seen = -1.f;
+					// float max_weight_seen = -1.f;
 					for (const auto* vertex : nearbyVertices) {
 						if (vertex == nullptr) continue;
 						float cosTheta = std::max(Dot(shadingData.sNormal, vertex->wi), 0.f);
 						if (cosTheta <= 0.1f) continue;
 						
 						float sqrtLum = std::sqrt(vertex->Li.Lum());
-						float weight = std::min(std::max(sqrtLum, 0.f), MAX_FIREFLY_CLAMP);
+						float weight = std::max(sqrtLum, 0.f);
 						if (weight < EPSILON) continue;
 
 						// BSDF inversion to get u, v, and u_lobe
@@ -834,10 +820,10 @@ public:
 						totalInsertedWeight += weight;
 						acceptedVertices++;
 
-						if (weight > max_weight_seen) {
-							max_weight_seen = weight;
-							best_lobe_selection = u_lobe;
-						}
+						// if (weight > max_weight_seen) {
+							// max_weight_seen = weight;
+							// best_lobe_selection = u_lobe;
+						// }
 					}
 				}
 				// Timing completed
@@ -937,7 +923,7 @@ public:
 			qTree.clear();
 
 			// Do not contribute if we have pdf anomalies
-			if (pdfCombined <= 0.f || std::isnan(pdfCombined) || std::isinf(pdfCombined)) {
+			if (pdfCombined <= 1e-8f || std::isnan(pdfCombined) || std::isinf(pdfCombined)) {
 				records.push_back(record);
 				return;
 			}
@@ -971,15 +957,9 @@ public:
 			float pALight = pmfLight * pdfLight;
 			float pABsdf = previousBsdfPdf;
 
-			// Handle degenerate pAs
-			if (pALight > 0.f && pABsdf > 0.f) {
-				// Calculate Weight for MIS
-				float wind = weightPowerHeuristics(pABsdf, pALight);
-				record.misEmission = backgroundColour * wind;
-			}
-			else {
-				record.misEmission = backgroundColour;
-			}
+			// Calculate Weight for MIS
+			float wind = weightPowerHeuristics(pABsdf, pALight);
+			record.misEmission = backgroundColour * wind;
 		}
 		records.push_back(record);
 		return;
@@ -1027,7 +1007,7 @@ public:
 
 			// QTree Insert
 			float sqrtLum = std::sqrt(vertex->Li.Lum());
-			float weight = std::min(std::max(sqrtLum, 0.f), MAX_FIREFLY_CLAMP);
+			float weight = std::max(sqrtLum, 0.f);
 			if (weight > 0.f) {
 				debugQTree.insert(uDebug, vDebug, weight);
 				plottedPoints.push_back({ uDebug, vDebug });
@@ -1160,7 +1140,7 @@ public:
 			float pdfBsdf = 0.f;
 			Colour indirect;
 			Vec4 wi = shadingData.bsdf->sample(shadingData, sampler, indirect, pdfBsdf);
-			if (pdfBsdf <= 0.f) return direct;
+			if (pdfBsdf <= 1e-8f) return direct;
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
 			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
 
@@ -1185,9 +1165,6 @@ public:
 		// Infinite Light PDF and PMF
 		float pmfLight = 1.f / scene->lights.size();
 		float pdfLight = scene->background->PDF(shadingData, r.dir);
-
-		// Handle degenerate PMF / PDF cases
-		if (pmfLight <= 0.f || pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
 
 		// Calculate pA of Light and BSDF for MIS
 		float pALight = pmfLight * pdfLight;

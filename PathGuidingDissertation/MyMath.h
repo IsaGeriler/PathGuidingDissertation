@@ -13,17 +13,19 @@
 
 // Helper Functions for MIS (Multiple Importance Sampling)
 // Balanced Heuristics
-float weightBalancedHeurictics(float pA, float pB) {
-	if (pA + pB <= 0.f) return 0.f;
+float weightBalancedHeurictics(float pdfA, float pdfB) {
+	if (pdfA <= 0.f) return 0.f;
+	float pA = pdfA;
+	float pB = (pdfB > 0.f) ? pdfB : 0.f;
 	return pA / (pA + pB);
 }
 
 // Power Heuristics
 // Beta is set to 2 as default, but can be increased further
-float weightPowerHeuristics(float pA, float pB, float beta = 2.f) {
-	float pABeta = std::pow(pA, beta);
-	float pBBeta = std::pow(pB, beta);
-	if (pABeta + pBBeta <= 0.f) return 0.f;
+float weightPowerHeuristics(float pdfA, float pdfB, float beta = 2.f) {
+	if (pdfA <= 0.f) return 0.f;
+	float pABeta = std::pow(pdfA, beta);
+	float pBBeta = (pdfB > 0.f) ? std::pow(pdfB, beta) : 0.f;
 	return pABeta / (pABeta + pBBeta);
 }
 

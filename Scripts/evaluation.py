@@ -142,11 +142,14 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(script_dir)
 
-    # Define the Ground Truth
-    gt_base = os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_GT")
+    # Define the Ground Truth (scenenamePathTrace8192SPP)
+    # gt_base = os.path.join(repo_root, "Images", "GroundTruths", "CornellBoxPathTrace8192SPP")
+    gt_base = os.path.join(repo_root, "Images", "GroundTruths", "KitchenPathTrace8192SPP")
 
     # Define the test case directories
     test_bases = [
+        # os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBox_PathGuide_128"),
+        # os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBox_PathTrace_128")
         os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_128"),
         os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_128")
         #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_256"),
@@ -159,6 +162,7 @@ if __name__ == "__main__":
     results = []
     for test in test_bases:
         row_data = evaluate_scene("Kitchen", gt_base, test)
+        # row_data = evaluate_scene("CornellBox", gt_base, test)
         results.append(row_data)
 
     # Save CSV using absolute path
