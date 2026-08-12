@@ -254,8 +254,6 @@ struct IntersectionData {
 
 struct BVHBuildNode {
 	AABB bounds;
-	// rightChild = leftChild + 1, so no need to store it
-	// leftFirst = 0 is root node, no need to reserve offset I guess...
 	int leftFirst = 0, used = 0;
 	bool isLeaf() const { return used > 0; }
 };
