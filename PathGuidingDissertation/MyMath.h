@@ -25,8 +25,8 @@ float weightBalancedHeurictics(float pdfA, float pdfB) {
 // Beta is set to 2 as default, but can be increased further
 float weightPowerHeuristics(float pdfA, float pdfB, float beta = 2.f) {
 	if (pdfA <= 0.f) return 0.f;
-	float pABeta = std::pow(pdfA, beta);
-	float pBBeta = (pdfB > 0.f) ? std::pow(pdfB, beta) : 0.f;
+	float pABeta = (beta == 2.f) ? pdfA * pdfA : std::pow(pdfA, beta);
+	float pBBeta = (pdfB > 0.f) ? ((beta == 2.f) ? pdfB * pdfB : std::pow(pdfB, beta)) : 0.f;
 	return pABeta / (pABeta + pBBeta);
 }
 

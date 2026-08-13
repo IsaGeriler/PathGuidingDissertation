@@ -453,10 +453,10 @@ public:
 		film->clear();
 	}
 
-	Colour computeDirect(const ShadingData& shadingData, Sampler* sampler) {
+	Colour computeDirect(const ShadingData& shadingData, Sampler* sampler, const std::function<float(const Vec4&)>& pdfFunction = nullptr) {
 		// Is surface is specular we cannot computing direct lighting
 		if (shadingData.bsdf->isPureSpecular() == true) return Colour(0.f, 0.f, 0.f);
-		// Compute direct lighting here
+		
 		// Sample Light
 		float pmfLight = 0.f;
 		Light* light = scene->sampleLight(sampler, pmfLight);
@@ -488,7 +488,9 @@ public:
 			if (scene->visible(shadowRayOffset, pointOnLight)) {
 				// Evaluate BSDF and PDF of it
 				Colour bsdf = shadingData.bsdf->evaluate(shadingData, wi);
-				float pdfBsdf = shadingData.bsdf->PDF(shadingData, wi);
+
+				// Using pdfFunction if we ever use Path Guiding for Defensive Sampling MIS
+				float pdfBsdf = (pdfFunction != nullptr) ? pdfFunction(wi) : shadingData.bsdf->PDF(shadingData, wi);
 
 				// Calculate Weight for MIS
 				float pALight = pdfLight * pmfLight;
@@ -523,11 +525,12 @@ public:
 				// Evaluate BSDF and multiply terms and return
 				Colour bsdf = shadingData.bsdf->evaluate(shadingData, wi);
 
-				// Evaluate pALight and pABsdf for MIS
-				// cosTheta is pretty much geometry term for Environment Mapping so pdfBsdf turns into pABsdf
+				// Evaluate pALight and pABsdf for MIS - cosTheta is pretty much geometry term for Environment Mapping so pdfBsdf turns into pABsdf
 				float pALight = pdfLight * pmfLight;
 				if (pALight <= 1e-8f) return Colour(0.f, 0.f, 0.f);
-				float pABsdf = shadingData.bsdf->PDF(shadingData, wi);
+
+				// Using pdfFunction if we ever use Path Guiding for Defensive Sampling MIS
+				float pABsdf = (pdfFunction != nullptr) ? pdfFunction(wi) : shadingData.bsdf->PDF(shadingData, wi);
 				
 				// Calculate Weight for MIS
 				float wd = weightPowerHeuristics(pALight, pABsdf);
@@ -551,98 +554,6 @@ public:
 	}
 
 	// --- Path Guiding Algorithm Work Start ---
-	Colour computeDirectGuidedPath(const ShadingData& shadingData, Sampler* sampler, const std::function<float(const Vec4&)>& pdfFunction) {
-		// Is surface is specular we cannot computing direct lighting
-		if (shadingData.bsdf->isPureSpecular() == true) return Colour(0.f, 0.f, 0.f);
-		// Compute direct lighting here
-		// Sample Light
-		float pmfLight = 0.f;
-		Light* light = scene->sampleLight(sampler, pmfLight);
-		if (light == nullptr || pmfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
-
-		// Area Light
-		if (light->isArea()) {
-			// Sample point on light and store returned emission
-			float pdfLight = 0.f;
-			Colour emittedColour;
-			Vec4 pointOnLight = light->sample(shadingData, sampler, emittedColour, pdfLight);
-			if (pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
-
-			// Get surface to light and direction to light
-			Vec4 surfaceToLight = pointOnLight - shadingData.x;
-			Vec4 wi = surfaceToLight.normalize();
-
-			// Calculate Geometry Term
-			float denominator = surfaceToLight.lengthSquare();
-			if (denominator < EPSILON) return Colour(0.f, 0.f, 0.f);
-			float cosTheta = std::max(Dot(wi, shadingData.sNormal), 0.f);
-			float cosThetaPrime = std::max(Dot(-wi, light->normal(shadingData, wi)), 0.f);
-			if (cosTheta <= 0.f || cosThetaPrime <= 0.f) return Colour(0.f, 0.f, 0.f);
-			float geometryTerm = (cosTheta * cosThetaPrime) / denominator;
-
-			// Calculate visibility
-			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
-			Vec4 shadowRayOffset(shadingData.x + shadingData.gNormal * (EPSILON * sign));
-			if (scene->visible(shadowRayOffset, pointOnLight)) {
-				// Evaluate BSDF and PDF of it
-				Colour bsdf = shadingData.bsdf->evaluate(shadingData, wi);
-
-				// It was shadingData.bsdf->PDF() at first, but when guiding the paths
-				// this may cause pdf mismatches. So this is an attempt to fix it
-				float pdfBsdf = pdfFunction(wi);
-
-				// Calculate Weight for MIS
-				float pALight = pdfLight * pmfLight;
-				if (pALight <= 1e-8f) return Colour(0.f, 0.f, 0.f);
-				float pABsdf = pdfBsdf * cosThetaPrime / denominator;
-				float wd = weightPowerHeuristics(pALight, pABsdf);
-
-				// Multiply terms, divide by pALight, and return
-				return (emittedColour * bsdf * geometryTerm * wd) / pALight;
-			}
-			return Colour(0.f, 0.f, 0.f);
-		}
-		// Environment Map
-		else {
-			// Sample from light, returns direction instead of point
-			float pdfLight = 0.f;
-			Colour emittedColour;
-			Vec4 wi = light->sample(shadingData, sampler, emittedColour, pdfLight);
-			if (pdfLight <= 0.f) return Colour(0.f, 0.f, 0.f);
-
-			// Evaluate Geometry Term for environment maps
-			// It's just cosTheta because there is no next surface
-			float cosTheta = std::max(Dot(wi, shadingData.sNormal), 0.f);
-			if (cosTheta <= 0.f) return Colour(0.f, 0.f, 0.f);
-
-			// Evaluate visibility to outside scene bounds
-			// Scene Bounds Fix: Replaces calculated SceneBounds AABB length with SceneBounds sceneRadius and sceneCentre
-			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
-			Vec4 shadowRayOffset(shadingData.x + shadingData.gNormal * (EPSILON * sign));
-			Vec4 sceneBoundOffset = shadingData.x + (wi * (2.f * use<SceneBounds>().sceneRadius));
-			if (scene->visible(shadowRayOffset, sceneBoundOffset)) {
-				// Evaluate BSDF and multiply terms and return
-				Colour bsdf = shadingData.bsdf->evaluate(shadingData, wi);
-
-				// Evaluate pALight and pABsdf for MIS
-				// cosTheta is pretty much geometry term for Environment Mapping so pdfBsdf turns into pABsdf
-				float pALight = pdfLight * pmfLight;
-				if (pALight <= 1e-8f) return Colour(0.f, 0.f, 0.f);
-
-				// It was shadingData.bsdf->PDF() at first, but when guiding the paths
-				// this may cause pdf mismatches. So this is an attempt to fix it
-				float pABsdf = pdfFunction(wi);
-
-				// Calculate Weight for MIS
-				float wd = weightPowerHeuristics(pALight, pABsdf);
-
-				// Multiply terms, divide by pALight, and return
-				return (emittedColour * bsdf * cosTheta * wd) / pALight;
-			}
-			return Colour(0.f, 0.f, 0.f);
-		}
-	}
-
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
 		// --- 1. Forward Pass Phase ---
 		thread_local std::vector<ForwardPassRecord> records;
@@ -738,7 +649,7 @@ public:
 			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
 			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
 			if (depth == 8) {
-				record.directLighting = computeDirectGuidedPath(shadingData, sampler, [](const Vec4&) { return 0.f; });
+				record.directLighting = computeDirect(shadingData, sampler, [](const Vec4&) { return 0.f; });
 				records.push_back(record);
 				return;
 			}
@@ -862,7 +773,7 @@ public:
 			};
 
 			// Save the direct lighting (NEE) to the record
-			record.directLighting = computeDirectGuidedPath(shadingData, sampler, forwardPdf);
+			record.directLighting = computeDirect(shadingData, sampler, forwardPdf);
 
 			// Apply Russian Roulette
 			// Russian Roulette should kick in normally between at depth 3 to 5

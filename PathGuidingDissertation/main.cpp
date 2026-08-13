@@ -458,9 +458,9 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/veach-mis";
 	
 	// -- Environment Map Test Scenes --
-	//std::string sceneName = "../Scenes/classroom";
+	std::string sceneName = "../Scenes/classroom";
 	//std::string sceneName = "../Scenes/car2";
-	std::string sceneName = "../Scenes/dining-room";
+	//std::string sceneName = "../Scenes/dining-room";
 	//std::string sceneName = "../Scenes/house";
 	//std::string sceneName = "../Scenes/living-room";
 	//std::string sceneName = "../Scenes/materialball";
