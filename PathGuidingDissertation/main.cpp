@@ -436,10 +436,10 @@ static void runTest() {
 
 int main(int argc, char* argv[]) {
 	// Run testing code first before rendering any stuff!
-	runTest();
+	// runTest();
 
 	// Note - Test on these scenes
-	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase
+	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase +
 	// Classroom, Sibenik, Dining Room, Living Room 1
 
 	// -- Area Light Test Scenes --
@@ -447,12 +447,12 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
 	//std::string sceneName = "../Scenes/coffee";
-	std::string sceneName = "../Scenes/cornell-box";
+	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
 	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
-	//std::string sceneName = "../Scenes/staircase";
+	std::string sceneName = "../Scenes/staircase";
 	//std::string sceneName = "../Scenes/staircase2";
 	//std::string sceneName = "../Scenes/veach-bidir";
 	//std::string sceneName = "../Scenes/veach-mis";

@@ -27,7 +27,7 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define GUIDED_PATH true
+#define GUIDED_PATH false
 #define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
 #define DEBUG_BVH false
@@ -422,8 +422,8 @@ public:
 	std::vector<PathVertex> globalCacheList;
 	// Ground Truth: 8192/16384					(should really be an absurd number to eliminate variance)
 	// Testing SPPs: 128/256/512/1024/2048/4096 (render, and compare error metrics with the groung truth)
-	// int maxSPP = 8192;
-	int maxSPP = 128;
+	int maxSPP = 8192;
+	// int maxSPP = 128;
 	int learningThreshold = maxSPP / 8;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
