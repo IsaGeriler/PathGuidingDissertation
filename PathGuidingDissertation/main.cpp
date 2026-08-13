@@ -440,7 +440,7 @@ int main(int argc, char* argv[]) {
 
 	// Note - Test on these scenes
 	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase +
-	// Classroom, Sibenik, Dining Room, Living Room 1
+	// Classroom, Sibenik, Dining Room +, Living Room 1
 
 	// -- Area Light Test Scenes --
 	//std::string sceneName = "../Scenes/bathroom";
@@ -452,7 +452,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
-	std::string sceneName = "../Scenes/staircase";
+	//std::string sceneName = "../Scenes/staircase";
 	//std::string sceneName = "../Scenes/staircase2";
 	//std::string sceneName = "../Scenes/veach-bidir";
 	//std::string sceneName = "../Scenes/veach-mis";
@@ -460,7 +460,7 @@ int main(int argc, char* argv[]) {
 	// -- Environment Map Test Scenes --
 	//std::string sceneName = "../Scenes/classroom";
 	//std::string sceneName = "../Scenes/car2";
-	//std::string sceneName = "../Scenes/dining-room";
+	std::string sceneName = "../Scenes/dining-room";
 	//std::string sceneName = "../Scenes/house";
 	//std::string sceneName = "../Scenes/living-room";
 	//std::string sceneName = "../Scenes/materialball";
