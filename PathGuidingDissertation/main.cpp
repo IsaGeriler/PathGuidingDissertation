@@ -440,7 +440,7 @@ int main(int argc, char* argv[]) {
 
 	// Note - Test on these scenes
 	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase +
-	// Classroom, Sibenik, Dining Room +, Living Room 1
+	// Classroom +, Sibenik, Dining Room +
 
 	// -- Area Light Test Scenes --
 	//std::string sceneName = "../Scenes/bathroom";
