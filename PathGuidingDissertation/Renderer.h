@@ -27,13 +27,17 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define GUIDED_PATH true
+#define PHOTON_MAPPING true
+#define GUIDED_PATH false
 #define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
 #define DEBUG_BVH true
 
 // Enable NEE or not for Incoming Radiance (Li)
 constexpr bool enableNEE = true;
+
+// Max Bounces
+static const int MAX_DEPTH = 8;
 
 // Max Child Nodes That PointBVH Can Have
 static const int MAX_CHILDNODE_RECORDS = 16;
@@ -59,6 +63,23 @@ struct ScreenTile {
 	unsigned int end_tile_y(Film* film) const { return std::min(y + tile_size - 1u, film->height - 1u); }
 };
 
+// --- Struct definition for Photon Mapping ---
+struct Photon {
+	Vec4 position;  // Hit Point (shadingData.x)
+	Vec4 normal;    // Shading/Geometric Normal
+	Vec4 wi;        // Incoming Direction
+	Colour flux;    // This is NOT Incoming Radiance
+	int key;        // Axis/key for the KD-Tree
+};
+
+// Max-Heap: Top element becomes the one with larger distance
+struct NearestPhoton {
+	float distanceSq;
+	int key;
+	bool operator<(const NearestPhoton& other) const { return this->distanceSq < other.distanceSq; }
+};
+// --- Struct definition for Photon Mapping End ---
+
 // --- Struct definitions for Path Guiding Work ---
 struct PathVertex {
 	Vec4 position;  // Hit Point (shadingData.x)
@@ -80,7 +101,8 @@ struct ForwardPassRecord {
 	bool storeRecord = false;  // Do not store if previous surface is pure specular
 };
 
-// Creating this struct for the max-heap part of my kNN-search
+// TO:DO - Modify this according to my NearestPhoton struct so that I can speed up Path Guiding
+// Max-Heap: Top element becomes the one with larger distance
 struct NearestPathVertex {
 	float distanceSq;
 	const PathVertex* vertex;
@@ -408,6 +430,146 @@ public:
 };
 // --- Spatial-Tree Component to Store PathVertex Caches End ---
 
+// --- KD-Tree for Photon Mapping Start ---
+class PhotonMap {
+private:
+	// Attribute - List to store all Photons
+	std::vector<Photon> photons;
+
+	// Methods
+	void buildRecursive(int startIdx, int endIdx, int depth) {
+		// Return if the divide element count is not worth it
+		if (endIdx - startIdx <= 1) return;
+
+		// Determine the split axis
+		int ax = depth % 3;
+		int midIdx = startIdx + (endIdx - startIdx) / 2;
+
+		// Get the first, last, and nth element indexes (similar to the PointBVH for my Path Guiding)
+		auto first = photons.begin() + startIdx;
+		auto nth = photons.begin() + midIdx;
+		auto last = photons.begin() + endIdx;
+
+		// From those indexes, sort elements via a comparator
+		std::nth_element(first, nth, last,
+			// Lambda function as a comparator, capture the split axis by value
+			// Compare the values of corresponding axis value of position vectors (similar to the PointBVH for my Path Guiding)
+			[ax](Photon& photon1, Photon& photon2) { return photon1.position[ax] < photon2.position[ax]; }
+		);
+
+		// Assign the key index to the middle Photon
+		photons[midIdx].key = ax;
+
+		// Recursive build
+		buildRecursive(startIdx, midIdx, depth + 1);
+		buildRecursive(midIdx + 1, endIdx, depth + 1);
+	}
+
+	void searchKNN(int startIdx, int endIdx, int maxPhotons, const Vec4& targetPosition, float& maxDistanceSq, std::priority_queue<NearestPhoton>& nearestPhotons) {
+		// If start index is bigger or equal than end index, no point in this
+		if (startIdx >= endIdx) return;
+
+		// Obtain the middle index, and the corresponding Photon
+		int midIdx = startIdx + (endIdx - startIdx) / 2;
+		const Photon& photon = photons[midIdx];
+
+		// Calculate distance between the photon and targetPosition
+		float distanceSq = (targetPosition - photon.position).lengthSquare();
+		if (distanceSq < maxDistanceSq) {
+			// Push in the max heap
+			nearestPhotons.push({ distanceSq, midIdx });
+
+			// If max-heap size is bigger than the limit, pop and adjust the max distance
+			if (nearestPhotons.size() > maxPhotons) {
+				nearestPhotons.pop();
+				maxDistanceSq = nearestPhotons.top().distanceSq;
+			}
+		}
+
+		// Which side of the plane to split?
+		float axisDistance = 0.f;
+		if (photon.key == 0) axisDistance = targetPosition.x - photon.position.x;
+		else if (photon.key == 1) axisDistance = targetPosition.y - photon.position.y;
+		else if (photon.key == 2) axisDistance = targetPosition.z - photon.position.z;
+
+		// Left and right childs
+		int leftStartIdx = startIdx, leftEndIdx = midIdx;
+		int rightStartIdx = midIdx + 1, rightEndIdx = endIdx;
+
+		// Recursive traverse based on nearest child
+		if (axisDistance < 0.f) {
+			searchKNN(leftStartIdx, leftEndIdx, maxPhotons, targetPosition, maxDistanceSq, nearestPhotons);
+			if (axisDistance * axisDistance < maxDistanceSq) {
+				searchKNN(rightStartIdx, rightEndIdx, maxPhotons, targetPosition, maxDistanceSq, nearestPhotons);
+			}
+		} else {
+			searchKNN(rightStartIdx, rightEndIdx, maxPhotons, targetPosition, maxDistanceSq, nearestPhotons);
+			if (axisDistance * axisDistance < maxDistanceSq) {
+				searchKNN(leftStartIdx, leftEndIdx, maxPhotons, targetPosition, maxDistanceSq, nearestPhotons);
+			}
+		}
+	}
+public:
+	// Methods
+	void build() {
+		// If we don't have any photons, we cannot build the KD-Tree
+		if (photons.empty()) return;
+		int rootIdx = 0;
+		int lastElementIdx = photons.size();
+		buildRecursive(rootIdx, lastElementIdx, 0);
+	}
+
+	// .size() returns size_t, which is an unsigned int give or take
+	size_t getSize() const { return photons.size(); }
+
+	// Need an insert and clear method since the vector is a private attribute!
+	void insertPhoton(Photon& photon) { photons.push_back(photon); }
+	void clearMap() { photons.clear(); }
+
+	Colour estimateRadiance(ShadingData& shadingData, const Vec4& position, const Vec4& normal, int maxPhotons = 100, float maxSearchRadius = 1.f) {
+		// We cannot estimate radiance if we don't have Photons
+		if (photons.empty()) return Colour(0.f, 0.f, 0.f);
+
+		// Define the variables we'll pass to the kNN-Search
+		std::priority_queue<NearestPhoton> nearestPhotons;
+		float maxDistanceSq = maxSearchRadius * maxSearchRadius;
+
+		// Do kNN-Search
+		int startIdx = 0, endIdx = (int)(photons.size());
+		searchKNN(startIdx, endIdx, maxPhotons, position, maxDistanceSq, nearestPhotons);
+		if (nearestPhotons.empty()) return Colour(0.f, 0.f, 0.f);
+		
+		float radiusSq = maxDistanceSq;
+		if (radiusSq < EPSILON) return Colour(0.f, 0.f, 0.f);
+
+		// Accumulate Radiance
+		float maxRadius = std::sqrt(radiusSq);
+		Colour accumulatedRadiance(0.f, 0.f, 0.f);
+		while (!nearestPhotons.empty()) {
+			// Pop the top Photon
+			int photonIdx = nearestPhotons.top().key;
+			float distSq = nearestPhotons.top().distanceSq;
+			const Photon& photon = photons[photonIdx];
+			nearestPhotons.pop();
+
+			// Cone Filter [Jensen 1996]: I'll assume filter constant is equal to 1
+			float distance = std::sqrt(distSq);
+			float weight = std::max(0.f, 1.f - (distance / maxRadius));
+			// float weight = std::max(0.f, 1.f - (distance / k * maxRadius));
+
+			// Do not contribute this Photon to the Accumulate Radiance
+			if (Dot(photon.normal, shadingData.sNormal) < 0.01f) continue;
+			accumulatedRadiance = accumulatedRadiance + shadingData.bsdf->evaluate(shadingData, photon.wi) * photon.flux * weight;
+		}
+		// Divide by area and return Accumulated Radiance
+		float norm = (1.f - (2.f / 3.f));
+		// float norm = (1.f - (2.f / k * 3.f));
+		float invArea = 1.f / (norm *  M_PI * radiusSq);
+		return accumulatedRadiance * invArea;
+	}
+};
+// --- KD-Tree for Photon Mapping End ---
+
 class RayTracer {
 public:
 	Scene* scene;
@@ -433,6 +595,10 @@ public:
 	// Stats for Profiling
 	std::vector<ProfilerStats> perThreadStats;
 
+	// Photon Mapping
+	PhotonMap globalPhotonMap;
+	PhotonMap causticPhotonMap;
+
 	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas) {
 		scene = _scene;
 		canvas = _canvas;
@@ -446,6 +612,16 @@ public:
 		perThreadQTrees = new QTree[numProcs];
 		perThreadPathVertexRecords.resize(numProcs);
 		perThreadStats.resize(numProcs);
+
+		// Assuming our scene is ready to go
+		// Shoot Photons here for Photon Mapping
+		#if PHOTON_MAPPING
+		std::cout << "Photon Mapping First Pass: Shooting Photons...\n";
+		globalPhotonMap.clearMap();
+		shootPhotons(samplers, 500000);
+		std::cout << "Photon Mapping First Pass Completed! Photons Stored: " << globalPhotonMap.getSize() << std::endl;
+		#endif
+
 		clear();
 	}
 
@@ -553,6 +729,138 @@ public:
 		return scene->background->evaluate(r.dir);
 	}
 
+	// --- Photon Mapping Functions Start ---
+	// First Pass - Shoot Photons
+	// Emit photons
+	// Trace photons
+	// Store in Photon Map
+	void shootPhotons(Sampler* sampler, int numPhotons) {
+		// Shoot fixed number photons
+		// For each photon
+		//  • Sample light
+		//  • Sample outgoing direction
+		//  • Recursively trace into the scene
+		//  • Similar to light tracing
+		for (int i = 0; i < numPhotons; i++) {
+			// Sample a light
+			float pmfLight = 0.f;
+			Light* light = scene->sampleLight(sampler, pmfLight);
+			if (light == nullptr || pmfLight <= 0.f) continue;
+
+			// Sampled light is an area light
+			if (light->isArea()) {
+				// Sample outgoing direction
+				float pdfDirection = 0.f;
+				Vec4 wi = light->sampleDirectionFromLight(sampler, pdfDirection);
+				if (pdfDirection <= 0.f) continue;
+
+				// Sample position
+				float pdfPosition = 0.f;
+				Vec4 position = light->samplePositionFromLight(sampler, pdfPosition);
+				if (pdfPosition <= 0.f) continue;
+
+				// Sample light normal
+				Vec4 normal = light->normal(ShadingData(position, wi), wi);
+
+				// Calculate beta
+				float cosine = std::fabs(Dot(wi, normal));
+				float invPA = 1.f / (pdfDirection * pdfPosition * pmfLight * (float)numPhotons);
+				Colour emission = light->evaluate(-wi);
+				Colour beta = emission * cosine * invPA;
+				Ray r(position + wi * EPSILON, wi);
+				tracePhotonPath(r, sampler, beta, 0);
+			}
+		}
+		// TO:DO - Sampled Light is an Environment Map
+		// TO:DO - Handle Caustic Photon Map
+		globalPhotonMap.build();
+		// causticPhotonMap.build();
+	}
+	// Second Pass - Ray Trace From Eye
+	void tracePhotonPath(Ray& r, Sampler* sampler, Colour& flux, int depth) {
+		// Depends on the material
+		// Trace rays further OR
+		//  • Access photon map
+		//  • Compute Density estimation
+		if (depth >= MAX_DEPTH) return;
+		IntersectionData intersection = scene->traverse(r);
+		ShadingData shadingData = scene->calculateShadingData(intersection, r);
+		if (shadingData.t < FLT_MAX) {
+			// Store Photon Map
+			if (shadingData.bsdf->isLight()) return;
+			if (depth > 0 && !shadingData.bsdf->isPureSpecular()) {
+				Photon photon;
+				photon.position = shadingData.x;
+				photon.normal = shadingData.sNormal;
+				photon.wi = -r.dir;
+				photon.flux = flux;
+				globalPhotonMap.insertPhoton(photon);
+			}
+
+			// Sample BSDF
+			float pdfBsdf = 0.f;
+			Colour fBsdf(0.f, 0.f, 0.f);
+			Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
+			if (pdfBsdf <= 0.f) return;
+
+			float cosTheta = std::max(Dot(shadingData.sNormal, wiNext), 0.001f);
+			Colour throughput = fBsdf * cosTheta / pdfBsdf;
+
+			// Adaptive Russian Roulette
+			float maxChannel = std::max({ fBsdf.r, fBsdf.g, fBsdf.b });
+			float rrp = std::min(std::max(maxChannel, 0.05f), 0.95f);
+			if (sampler->next() > rrp) return;
+
+			// Calculate new flux
+			Colour beta = flux * throughput / rrp;
+			Ray nextRay(shadingData.x + shadingData.gNormal * EPSILON, wiNext);
+			tracePhotonPath(nextRay, sampler, beta, depth + 1);
+		}
+	}
+
+	Colour traceCameraRay(Ray& r, Sampler* sampler, int depth = 0) {
+		IntersectionData intersection = scene->traverse(r);
+		ShadingData shadingData = scene->calculateShadingData(intersection, r);
+		if (shadingData.t < FLT_MAX) {
+			// First depth ternary check to avoid double emission contribution
+			if (shadingData.bsdf->isLight()) return (depth == 0) ? shadingData.bsdf->emit(shadingData, r.dir) : Colour(0.f, 0.f, 0.f);
+
+			// Compute Direct Lighting
+			Colour direct = computeDirect(shadingData, sampler);
+
+			// Compute Intdirect Lighting for Global Photon Map
+			Colour indirectGlobal(0.f, 0.f, 0.f);
+
+			// TO:DO - Compute Intdirect Lighting for Caustics Photon Map
+			// Colour indirectCaustic(0.f, 0.f, 0.f);
+
+			// Final Gathering Stage to Battle with Blurry Images and Light Leaks
+			if (depth == 0) {
+				// Shoot extra rays from first non-specular hit point
+				float pdfBsdf = 0.f;
+				Colour fBsdf(0.f, 0.f, 0.f);
+				Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
+				if (pdfBsdf > 0.f) {
+					float cosTheta = std::max(Dot(shadingData.sNormal, wiNext), 0.001f);
+					// Shoot final gather ray
+					Ray finalGatherRay(shadingData.x + shadingData.gNormal * EPSILON, wiNext);
+					Colour incomingRadiance = traceCameraRay(finalGatherRay, sampler, depth + 1);
+					// Apply the formula as usual
+					indirectGlobal = (incomingRadiance * fBsdf * cosTheta) / pdfBsdf;
+				}
+			}
+			else {
+				// Extra bounce is over, we can estimate the density radiance now at secondary hit point/s!
+				indirectGlobal = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, 100, 0.3f);
+			}
+
+			// Combine results
+			return direct + indirectGlobal;
+		}
+		return scene->background->evaluate(r.dir);
+	}
+	// --- Photon Mapping Functions End ---
+
 	// --- Path Guiding Algorithm Work Start ---
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
 		// --- 1. Forward Pass Phase ---
@@ -649,7 +957,7 @@ public:
 			// Why have I applied RRP at the last depth...
 			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
 			// We will work on SD-domain unlike Guo et al. 2018, in which they were restricted with n = m = 2
-			if (depth == 8) {
+			if (depth >= MAX_DEPTH) {
 				record.directLighting = computeDirect(shadingData, sampler, [](const Vec4&) { return 0.f; });
 				records.push_back(record);
 				return;
@@ -1048,7 +1356,7 @@ public:
 			Colour direct = pathThroughput * computeDirect(shadingData, sampler);
 
 			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
-			if (depth == 8) return direct;
+			if (depth >= MAX_DEPTH) return direct;
 
 			// Apply Russian Roulette Starting at the ray depth 4
 			// Russian Roulette should kick in normally between at depth 3 to 5
@@ -1176,12 +1484,17 @@ public:
 								// Colour col = albedo(ray);
 								// Colour col = direct(ray, &samplers[i]);
 
-								#if GUIDED_PATH
+								#if PHOTON_MAPPING
+								// Photton Mapping [Jensen 1995]
+								Colour col = traceCameraRay(ray, &samplers[i]);
+								#elif GUIDED_PATH
+								// Our novel Path Guiding in PSS
 								Colour col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
 								if (isGuidingPhase && getSPP() == learningThreshold && x == film->width / 2 && y == film->height / 2) {
 									viewPrimarySampleSpace(ray, cacheBVH, MAX_NEARBY_VERTICES);
 								}
 								#else
+								// Unidirectional Path Trace
 								Colour col = pathTrace(ray, &samplers[i]);
 								#endif
 
