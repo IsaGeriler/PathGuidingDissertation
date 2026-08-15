@@ -783,8 +783,9 @@ public:
 				Ray r(position + lightNormal * sign * EPSILON, wi);
 				tracePhotonPath(r, sampler, flux, 0);
 			}
+			// TO:DO - Sampled Light is an Environment Map
 		}
-		// TO:DO - Sampled Light is an Environment Map
+		// Build Global and Caustic Photon Maps
 		globalPhotonMap.build();
 		causticPhotonMap.build();
 	}
@@ -924,7 +925,23 @@ public:
 			// Combine results - Ld + Lg + Lc
 			return direct + indirectGlobal + indirectCaustic;
 		}
-		return scene->background->evaluate(r.dir);
+		// Evaluate MIS for Environment Map
+		// Calculate Background Colour
+		Colour backgroundColour = scene->background->evaluate(r.dir);
+		if (depth == 0 || isPreviousSpecular) return backgroundColour;
+		if (backgroundColour.Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
+		
+		// Infinite Light PDF and PMF
+		float pmfLight = 1.f / scene->lights.size();
+		float pdfLight = scene->background->PDF(shadingData, r.dir);
+
+		// Calculate pA of Light and BSDF for MIS
+		float pALight = pmfLight * pdfLight;
+		float pABsdf = previousBsdfPdf;
+
+		// Calculate Weight for MIS
+		float wind = weightPowerHeuristics(pABsdf, pALight);
+		return backgroundColour * wind;
 	}
 	// --- Photon Mapping [Jensen 1995, 1996] Functions End ---
 
