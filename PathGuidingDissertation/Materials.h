@@ -126,6 +126,7 @@ public:
 	virtual Colour evaluate(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual float PDF(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual bool isPureSpecular() = 0;
+	virtual bool isHighlyGlossy() const { return false; }
 	virtual bool isTwoSided() = 0;
 	bool isLight() { return emission.Lum() > 0.f; }
 	void addLight(Colour _emission) { emission = _emission; }
@@ -380,6 +381,7 @@ public:
 	}
 
 	bool isPureSpecular() { return alpha < EPSILON; }
+	bool isHighlyGlossy() const override { return alpha < 0.12f; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -749,6 +751,7 @@ public:
 	}
 
 	bool isPureSpecular() { return alpha < EPSILON; }
+	bool isHighlyGlossy() const override { return alpha < 0.12f; }
 	bool isTwoSided() { return false; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };

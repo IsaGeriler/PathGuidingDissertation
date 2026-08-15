@@ -39,6 +39,11 @@ constexpr bool enableNEE = true;
 // Max Bounces
 static const int MAX_DEPTH = 8;
 
+// Number of Photons to shoot
+static const int NUM_OF_PHOTONS_TO_SHOOT = 500000;
+static const int N_PHOTONS_GLOBAL = 275;
+static const int N_PHOTONS_CAUSTIC = 70;
+
 // Max Child Nodes That PointBVH Can Have
 static const int MAX_CHILDNODE_RECORDS = 16;
 
@@ -63,13 +68,13 @@ struct ScreenTile {
 	unsigned int end_tile_y(Film* film) const { return std::min(y + tile_size - 1u, film->height - 1u); }
 };
 
-// --- Struct definition for Photon Mapping ---
+// --- Struct definition for Photon Mapping [Jensen 1995, 1996] ---
 struct Photon {
 	Vec4 position;  // Hit Point (shadingData.x)
 	Vec4 normal;    // Shading/Geometric Normal
 	Vec4 wi;        // Incoming Direction
-	Colour flux;    // This is NOT Incoming Radiance
-	int key;        // Axis/key for the KD-Tree
+	Colour flux;    // Photon Flux (This is Energy, NOT Incoming Radiance)
+	int key = 0;    // Axis/key for the KD-Tree
 };
 
 // Max-Heap: Top element becomes the one with larger distance
@@ -78,7 +83,7 @@ struct NearestPhoton {
 	int key;
 	bool operator<(const NearestPhoton& other) const { return this->distanceSq < other.distanceSq; }
 };
-// --- Struct definition for Photon Mapping End ---
+// --- Struct definition for Photon Mapping [Jensen 1995, 1996] End ---
 
 // --- Struct definitions for Path Guiding Work ---
 struct PathVertex {
@@ -430,7 +435,7 @@ public:
 };
 // --- Spatial-Tree Component to Store PathVertex Caches End ---
 
-// --- KD-Tree for Photon Mapping Start ---
+// --- KD-Tree for Photon Mapping [Jensen 1995, 1996] Start ---
 class PhotonMap {
 private:
 	// Attribute - List to store all Photons
@@ -438,8 +443,8 @@ private:
 
 	// Methods
 	void buildRecursive(int startIdx, int endIdx, int depth) {
-		// Return if the divide element count is not worth it
-		if (endIdx - startIdx <= 1) return;
+		// If start index is bigger or equal than end index, no point in this
+		if (startIdx >= endIdx) return;
 
 		// Determine the split axis
 		int ax = depth % 3;
@@ -478,9 +483,10 @@ private:
 		if (distanceSq < maxDistanceSq) {
 			// Push in the max heap
 			nearestPhotons.push({ distanceSq, midIdx });
+			int heapSize = (int)(nearestPhotons.size());
 
 			// If max-heap size is bigger than the limit, pop and adjust the max distance
-			if (nearestPhotons.size() > maxPhotons) {
+			if (heapSize > maxPhotons) {
 				nearestPhotons.pop();
 				maxDistanceSq = nearestPhotons.top().distanceSq;
 			}
@@ -514,8 +520,7 @@ public:
 	void build() {
 		// If we don't have any photons, we cannot build the KD-Tree
 		if (photons.empty()) return;
-		int rootIdx = 0;
-		int lastElementIdx = photons.size();
+		int rootIdx = 0, lastElementIdx = (int)(photons.size());
 		buildRecursive(rootIdx, lastElementIdx, 0);
 	}
 
@@ -545,6 +550,7 @@ public:
 		// Accumulate Radiance
 		float maxRadius = std::sqrt(radiusSq);
 		Colour accumulatedRadiance(0.f, 0.f, 0.f);
+
 		while (!nearestPhotons.empty()) {
 			// Pop the top Photon
 			int photonIdx = nearestPhotons.top().key;
@@ -552,23 +558,25 @@ public:
 			const Photon& photon = photons[photonIdx];
 			nearestPhotons.pop();
 
-			// Cone Filter [Jensen 1996]: I'll assume filter constant is equal to 1
+			// Do not contribute this Photon to the Accumulate Radiance
+			if (Dot(photon.normal, shadingData.sNormal) < 0.f) continue;
+
+			// Cone Filter [Jensen 1996]
+			// I'll assume filter constant, k, is 1
 			float distance = std::sqrt(distSq);
 			float weight = std::max(0.f, 1.f - (distance / maxRadius));
-			// float weight = std::max(0.f, 1.f - (distance / k * maxRadius));
-
-			// Do not contribute this Photon to the Accumulate Radiance
-			if (Dot(photon.normal, shadingData.sNormal) < 0.01f) continue;
-			accumulatedRadiance = accumulatedRadiance + shadingData.bsdf->evaluate(shadingData, photon.wi) * photon.flux * weight;
+			
+			// Density Estimation
+			Colour fr = shadingData.bsdf->evaluate(shadingData, photon.wi);
+			accumulatedRadiance = accumulatedRadiance + fr * photon.flux *  weight;
 		}
 		// Divide by area and return Accumulated Radiance
-		float norm = (1.f - (2.f / 3.f));
-		// float norm = (1.f - (2.f / k * 3.f));
-		float invArea = 1.f / (norm *  M_PI * radiusSq);
+		// Cone Filter Normalization Factor: 1 - (2/3) = 1/3
+		float invArea = 3.f / (M_PI * radiusSq);
 		return accumulatedRadiance * invArea;
 	}
 };
-// --- KD-Tree for Photon Mapping End ---
+// --- KD-Tree for Photon Mapping [Jensen 1995, 1996] End ---
 
 class RayTracer {
 public:
@@ -612,17 +620,15 @@ public:
 		perThreadQTrees = new QTree[numProcs];
 		perThreadPathVertexRecords.resize(numProcs);
 		perThreadStats.resize(numProcs);
-
+		clear();
 		// Assuming our scene is ready to go
 		// Shoot Photons here for Photon Mapping
 		#if PHOTON_MAPPING
 		std::cout << "Photon Mapping First Pass: Shooting Photons...\n";
-		globalPhotonMap.clearMap();
-		shootPhotons(samplers, 500000);
-		std::cout << "Photon Mapping First Pass Completed! Photons Stored: " << globalPhotonMap.getSize() << std::endl;
+		shootPhotons(samplers, NUM_OF_PHOTONS_TO_SHOOT);
+		std::cout << "Photon Mapping First Pass Completed! Global Photon Map Size: " << globalPhotonMap.getSize() 
+				  << " | Caustic Photon Map Size: " << causticPhotonMap.getSize() << std::endl;
 		#endif
-
-		clear();
 	}
 
 	void clear() {
@@ -729,7 +735,7 @@ public:
 		return scene->background->evaluate(r.dir);
 	}
 
-	// --- Photon Mapping Functions Start ---
+	// --- Photon Mapping [Jensen 1995, 1996] Functions Start ---
 	// First Pass - Shoot Photons
 	// Emit photons
 	// Trace photons
@@ -741,6 +747,8 @@ public:
 		//  • Sample outgoing direction
 		//  • Recursively trace into the scene
 		//  • Similar to light tracing
+		globalPhotonMap.clearMap();
+		causticPhotonMap.clearMap();
 		for (int i = 0; i < numPhotons; i++) {
 			// Sample a light
 			float pmfLight = 0.f;
@@ -759,25 +767,30 @@ public:
 				Vec4 position = light->samplePositionFromLight(sampler, pdfPosition);
 				if (pdfPosition <= 0.f) continue;
 
+				// Get emission (Le)
+				Colour emission = light->evaluate(-wi);
+				if (emission.Lum() < 1e-8f) continue;
+
 				// Sample light normal
-				Vec4 normal = light->normal(ShadingData(position, wi), wi);
+				Vec4 lightNormal = light->normal(ShadingData(position, wi), wi);
 
 				// Calculate beta
-				float cosine = std::fabs(Dot(wi, normal));
+				float cosine = std::fabs(Dot(wi, lightNormal));
 				float invPA = 1.f / (pdfDirection * pdfPosition * pmfLight * (float)numPhotons);
-				Colour emission = light->evaluate(-wi);
-				Colour beta = emission * cosine * invPA;
-				Ray r(position + wi * EPSILON, wi);
-				tracePhotonPath(r, sampler, beta, 0);
+				Colour flux = emission * cosine * invPA;
+
+				int sign = (Dot(wi, lightNormal) > 0.f) ? 1 : -1;
+				Ray r(position + lightNormal * sign * EPSILON, wi);
+				tracePhotonPath(r, sampler, flux, 0);
 			}
 		}
 		// TO:DO - Sampled Light is an Environment Map
-		// TO:DO - Handle Caustic Photon Map
 		globalPhotonMap.build();
-		// causticPhotonMap.build();
+		causticPhotonMap.build();
 	}
+
 	// Second Pass - Ray Trace From Eye
-	void tracePhotonPath(Ray& r, Sampler* sampler, Colour& flux, int depth) {
+	void tracePhotonPath(Ray& r, Sampler* sampler, Colour flux, int depth, bool isCausticPath = false) {
 		// Depends on the material
 		// Trace rays further OR
 		//  • Access photon map
@@ -786,15 +799,21 @@ public:
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 		if (shadingData.t < FLT_MAX) {
-			// Store Photon Map
+			// Return is it's a light
 			if (shadingData.bsdf->isLight()) return;
-			if (depth > 0 && !shadingData.bsdf->isPureSpecular()) {
+
+			// Store the Photon
+			bool isSpecular = shadingData.bsdf->isPureSpecular();
+			if (depth > 0 && !isSpecular) {
 				Photon photon;
 				photon.position = shadingData.x;
 				photon.normal = shadingData.sNormal;
-				photon.wi = -r.dir;
+				photon.wi = -r.dir;				
 				photon.flux = flux;
-				globalPhotonMap.insertPhoton(photon);
+
+				// Check condition to store in caustic or global photon map
+				if (isCausticPath) causticPhotonMap.insertPhoton(photon);
+				else globalPhotonMap.insertPhoton(photon);
 			}
 
 			// Sample BSDF
@@ -803,63 +822,111 @@ public:
 			Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
 			if (pdfBsdf <= 0.f) return;
 
-			float cosTheta = std::max(Dot(shadingData.sNormal, wiNext), 0.001f);
-			Colour throughput = fBsdf * cosTheta / pdfBsdf;
-
-			// Adaptive Russian Roulette
-			float maxChannel = std::max({ fBsdf.r, fBsdf.g, fBsdf.b });
-			float rrp = std::min(std::max(maxChannel, 0.05f), 0.95f);
-			if (sampler->next() > rrp) return;
-
 			// Calculate new flux
-			Colour beta = flux * throughput / rrp;
-			Ray nextRay(shadingData.x + shadingData.gNormal * EPSILON, wiNext);
-			tracePhotonPath(nextRay, sampler, beta, depth + 1);
+			float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
+			Colour bounceWeight = fBsdf * (cosTheta / pdfBsdf);
+
+			// Apply Russian Roulette
+			if (depth >= 3) {
+				float maxChannel = std::max({ bounceWeight.r, bounceWeight.g, bounceWeight.b });
+				float rrp = std::min(std::max(maxChannel, 0.05f), 0.95f);
+				if (sampler->next() > rrp) return;
+				bounceWeight = bounceWeight / rrp;
+			}
+			
+			flux = flux * bounceWeight;
+			if (flux.Lum() < 1e-8f) return;
+			
+			int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
+			Ray nextRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
+			bool nextIsCaustic = (depth == 0) ? isSpecular : (isCausticPath && isSpecular);
+			tracePhotonPath(nextRay, sampler, flux, depth + 1, nextIsCaustic);
 		}
 	}
 
-	Colour traceCameraRay(Ray& r, Sampler* sampler, int depth = 0) {
+	Colour traceCameraRay(Ray& r, Sampler* sampler, int depth = 0, bool isFinalGatherRay = false, bool isPreviousSpecular = false, float previousBsdfPdf = 0.f) {
+		if (depth >= MAX_DEPTH) return Colour(0.f, 0.f, 0.f);
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 		if (shadingData.t < FLT_MAX) {
 			// First depth ternary check to avoid double emission contribution
-			if (shadingData.bsdf->isLight()) return (depth == 0) ? shadingData.bsdf->emit(shadingData, r.dir) : Colour(0.f, 0.f, 0.f);
+			if (shadingData.bsdf->isLight()) {
+				Colour emission = shadingData.bsdf->emit(shadingData, shadingData.wo);
+				if (depth == 0 || isPreviousSpecular) return emission;
+			
+				// Evaluate MIS for Area Light
+				// Area Light PDF and PMF
+				float pmfLight = 1.f / scene->lights.size();
+				float pdfLight = 1.f / scene->triangles[intersection.ID].area;
 
-			// Compute Direct Lighting
+				float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
+				if (cosThetaPrime <= 0.f) return Colour(0.f, 0.f, 0.f);
+				float distanceSquare = SQ(intersection.t);
+				if (distanceSquare < EPSILON) return Colour(0.f, 0.f, 0.f);
+
+				// Calculate pA of Light and BSDF for MIS
+				float pALight = pdfLight * pmfLight;
+				float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
+
+				// Calculate Weight for MIS
+				float wind = weightPowerHeuristics(pABsdf, pALight);
+				return emission * wind;
+			}
+
+			// Perfect Specular or Glossy Surfaces
+			bool requiresRayTrace = (shadingData.bsdf->isPureSpecular() || shadingData.bsdf->isHighlyGlossy());
+			if (requiresRayTrace) {
+				// Specular Surface
+				float pdfBsdf = 0.f;
+				Colour fBsdf(0.f, 0.f, 0.f);
+				Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
+				
+				if (pdfBsdf <= EPSILON) return Colour(0.f, 0.f, 0.f);
+				
+				int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
+				Ray nextRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
+				Colour incoming = traceCameraRay(nextRay, sampler, depth + 1, isFinalGatherRay, true, pdfBsdf);
+				
+				float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
+				return incoming * fBsdf * (cosTheta / pdfBsdf);
+			}
+
+			// Diffuse Surfaces - Compute Direct Lighting
 			Colour direct = computeDirect(shadingData, sampler);
 
-			// Compute Intdirect Lighting for Global Photon Map
+			// Radius for Caustics & Compute Indirect Lighting for Caustic Photon Map
+			float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
+			float causticRadius = sceneDiagonal * 0.005f;
+			Colour indirectCaustic = causticPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, N_PHOTONS_CAUSTIC, causticRadius);
+
+			// Compute Indirect Lighting for Global Photon Map
 			Colour indirectGlobal(0.f, 0.f, 0.f);
-
-			// TO:DO - Compute Intdirect Lighting for Caustics Photon Map
-			// Colour indirectCaustic(0.f, 0.f, 0.f);
-
-			// Final Gathering Stage to Battle with Blurry Images and Light Leaks
-			if (depth == 0) {
+			if (!isFinalGatherRay) {
+				// Final Gathering Stage to Battle with Blurry Images and Light Leaks
 				// Shoot extra rays from first non-specular hit point
 				float pdfBsdf = 0.f;
 				Colour fBsdf(0.f, 0.f, 0.f);
 				Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
-				if (pdfBsdf > 0.f) {
-					float cosTheta = std::max(Dot(shadingData.sNormal, wiNext), 0.001f);
-					// Shoot final gather ray
-					Ray finalGatherRay(shadingData.x + shadingData.gNormal * EPSILON, wiNext);
-					Colour incomingRadiance = traceCameraRay(finalGatherRay, sampler, depth + 1);
-					// Apply the formula as usual
-					indirectGlobal = (incomingRadiance * fBsdf * cosTheta) / pdfBsdf;
-				}
-			}
-			else {
-				// Extra bounce is over, we can estimate the density radiance now at secondary hit point/s!
-				indirectGlobal = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, 100, 0.3f);
-			}
 
-			// Combine results
-			return direct + indirectGlobal;
+				if (pdfBsdf > EPSILON) {
+					// Shoot final gather ray and apply the formula as usual
+					float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
+					int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
+					Ray finalGatherRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
+					Colour incomingRadiance = traceCameraRay(finalGatherRay, sampler, depth + 1, true, false, pdfBsdf);
+					indirectGlobal = incomingRadiance * fBsdf * (cosTheta / pdfBsdf);
+				}
+			} else {
+				// Extra bounce is over, we can estimate the density radiance now at secondary hit point/s!
+				float globalRadius = sceneDiagonal * 0.03f;
+				indirectGlobal = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, N_PHOTONS_GLOBAL, globalRadius);
+			}
+			// Combine results - Ld + Lg + Lc
+			return direct + indirectGlobal + indirectCaustic;
 		}
 		return scene->background->evaluate(r.dir);
 	}
-	// --- Photon Mapping Functions End ---
+	// --- Photon Mapping [Jensen 1995, 1996] Functions End ---
 
 	// --- Path Guiding Algorithm Work Start ---
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
