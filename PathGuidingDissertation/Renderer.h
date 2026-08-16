@@ -41,8 +41,8 @@ static const int MAX_DEPTH = 8;
 
 // Number of Photons to shoot
 static const int NUM_OF_PHOTONS_TO_SHOOT = 500000;
-static const int N_PHOTONS_GLOBAL = 275;
-static const int N_PHOTONS_CAUSTIC = 70;
+static const int N_PHOTONS_GLOBAL = 100;
+static const int N_PHOTONS_CAUSTIC = 40;
 
 // Max Child Nodes That PointBVH Can Have
 static const int MAX_CHILDNODE_RECORDS = 16;
@@ -470,7 +470,7 @@ private:
 		buildRecursive(midIdx + 1, endIdx, depth + 1);
 	}
 
-	void searchKNN(int startIdx, int endIdx, int maxPhotons, const Vec4& targetPosition, float& maxDistanceSq, std::priority_queue<NearestPhoton>& nearestPhotons) {
+	void searchKNN(int startIdx, int endIdx, int maxPhotons, const Vec4& targetPosition, const Vec4& targetNormal, float& maxDistanceSq, std::priority_queue<NearestPhoton>& nearestPhotons) {
 		// If start index is bigger or equal than end index, no point in this
 		if (startIdx >= endIdx) return;
 
@@ -478,40 +478,38 @@ private:
 		int midIdx = startIdx + (endIdx - startIdx) / 2;
 		const Photon& photon = photons[midIdx];
 
-		// Calculate distance between the photon and targetPosition
-		float distanceSq = (targetPosition - photon.position).lengthSquare();
-		if (distanceSq < maxDistanceSq) {
-			// Push in the max heap
-			nearestPhotons.push({ distanceSq, midIdx });
-			int heapSize = (int)(nearestPhotons.size());
+		if (Dot(photon.normal, targetNormal) >= 0.f) {
+			// Calculate distance between the photon and targetPosition
+			float distanceSq = (targetPosition - photon.position).lengthSquare();
+			if (distanceSq < maxDistanceSq) {
+				// Push in the max heap
+				nearestPhotons.push({ distanceSq, midIdx });
+				int heapSize = (int)(nearestPhotons.size());
 
-			// If max-heap size is bigger than the limit, pop and adjust the max distance
-			if (heapSize > maxPhotons) {
-				nearestPhotons.pop();
-				maxDistanceSq = nearestPhotons.top().distanceSq;
+				// If max-heap size is bigger than the limit, pop and adjust the max distance
+				if (heapSize > maxPhotons) {
+					nearestPhotons.pop();
+					maxDistanceSq = nearestPhotons.top().distanceSq;
+				}
 			}
 		}
-
 		// Which side of the plane to split?
-		float axisDistance = 0.f;
-		if (photon.key == 0) axisDistance = targetPosition.x - photon.position.x;
-		else if (photon.key == 1) axisDistance = targetPosition.y - photon.position.y;
-		else if (photon.key == 2) axisDistance = targetPosition.z - photon.position.z;
-
+		float axisDistance = targetPosition[photon.key] - photon.position[photon.key];
+		
 		// Left and right childs
 		int leftStartIdx = startIdx, leftEndIdx = midIdx;
 		int rightStartIdx = midIdx + 1, rightEndIdx = endIdx;
 
 		// Recursive traverse based on nearest child
 		if (axisDistance < 0.f) {
-			searchKNN(leftStartIdx, leftEndIdx, maxPhotons, targetPosition, maxDistanceSq, nearestPhotons);
+			searchKNN(leftStartIdx, leftEndIdx, maxPhotons, targetPosition, targetNormal, maxDistanceSq, nearestPhotons);
 			if (axisDistance * axisDistance < maxDistanceSq) {
-				searchKNN(rightStartIdx, rightEndIdx, maxPhotons, targetPosition, maxDistanceSq, nearestPhotons);
+				searchKNN(rightStartIdx, rightEndIdx, maxPhotons, targetPosition, targetNormal, maxDistanceSq, nearestPhotons);
 			}
 		} else {
-			searchKNN(rightStartIdx, rightEndIdx, maxPhotons, targetPosition, maxDistanceSq, nearestPhotons);
+			searchKNN(rightStartIdx, rightEndIdx, maxPhotons, targetPosition, targetNormal, maxDistanceSq, nearestPhotons);
 			if (axisDistance * axisDistance < maxDistanceSq) {
-				searchKNN(leftStartIdx, leftEndIdx, maxPhotons, targetPosition, maxDistanceSq, nearestPhotons);
+				searchKNN(leftStartIdx, leftEndIdx, maxPhotons, targetPosition, targetNormal, maxDistanceSq, nearestPhotons);
 			}
 		}
 	}
@@ -541,7 +539,7 @@ public:
 
 		// Do kNN-Search
 		int startIdx = 0, endIdx = (int)(photons.size());
-		searchKNN(startIdx, endIdx, maxPhotons, position, maxDistanceSq, nearestPhotons);
+		searchKNN(startIdx, endIdx, maxPhotons, position, normal, maxDistanceSq, nearestPhotons);
 		if (nearestPhotons.empty()) return Colour(0.f, 0.f, 0.f);
 		
 		float radiusSq = maxDistanceSq;
@@ -558,9 +556,6 @@ public:
 			const Photon& photon = photons[photonIdx];
 			nearestPhotons.pop();
 
-			// Do not contribute this Photon to the Accumulate Radiance
-			if (Dot(photon.normal, shadingData.sNormal) < 0.f) continue;
-
 			// Cone Filter [Jensen 1996]
 			// I'll assume filter constant, k, is 1
 			float distance = std::sqrt(distSq);
@@ -568,10 +563,10 @@ public:
 			
 			// Density Estimation
 			Colour fr = shadingData.bsdf->evaluate(shadingData, photon.wi);
-			accumulatedRadiance = accumulatedRadiance + fr * photon.flux *  weight;
+			accumulatedRadiance = accumulatedRadiance + fr * photon.flux * weight;
 		}
 		// Divide by area and return Accumulated Radiance
-		// Cone Filter Normalization Factor: 1 - (2/3) = 1/3
+		// Cone Filter Normalization Factor = 1/3
 		float invArea = 3.f / (M_PI * radiusSq);
 		return accumulatedRadiance * invArea;
 	}
@@ -830,7 +825,7 @@ public:
 			// Apply Russian Roulette
 			if (depth >= 3) {
 				float maxChannel = std::max({ bounceWeight.r, bounceWeight.g, bounceWeight.b });
-				float rrp = std::min(std::max(maxChannel, 0.05f), 0.95f);
+				float rrp = std::min(std::max(maxChannel, 0.2f), 0.95f);
 				if (sampler->next() > rrp) return;
 				bounceWeight = bounceWeight / rrp;
 			}
@@ -854,7 +849,6 @@ public:
 			if (shadingData.bsdf->isLight()) {
 				Colour emission = shadingData.bsdf->emit(shadingData, shadingData.wo);
 				if (depth == 0 || isPreviousSpecular) return emission;
-			
 				// Evaluate MIS for Area Light
 				// Area Light PDF and PMF
 				float pmfLight = 1.f / scene->lights.size();
@@ -881,7 +875,7 @@ public:
 				float pdfBsdf = 0.f;
 				Colour fBsdf(0.f, 0.f, 0.f);
 				Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
-				
+
 				if (pdfBsdf <= EPSILON) return Colour(0.f, 0.f, 0.f);
 				
 				int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
@@ -897,7 +891,7 @@ public:
 
 			// Radius for Caustics & Compute Indirect Lighting for Caustic Photon Map
 			float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
-			float causticRadius = sceneDiagonal * 0.005f;
+			float causticRadius = sceneDiagonal * 0.002f;
 			Colour indirectCaustic = causticPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, N_PHOTONS_CAUSTIC, causticRadius);
 
 			// Compute Indirect Lighting for Global Photon Map
@@ -919,11 +913,18 @@ public:
 				}
 			} else {
 				// Extra bounce is over, we can estimate the density radiance now at secondary hit point/s!
-				float globalRadius = sceneDiagonal * 0.03f;
+				float globalRadius = sceneDiagonal * 0.008f;
 				indirectGlobal = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, N_PHOTONS_GLOBAL, globalRadius);
 			}
 			// Combine results - Ld + Lg + Lc
-			return direct + indirectGlobal + indirectCaustic;
+			Colour finalRadiance = direct + indirectGlobal + indirectCaustic;
+			if (!finalRadiance.isValid()) return Colour(0.f, 0.f, 0.f);
+
+			// Clamping to eliminate firefly artifacts
+			float maxLuminance = 20.f;
+			float lum = finalRadiance.Lum();
+			if (lum > maxLuminance) finalRadiance = finalRadiance * (maxLuminance / lum);
+			return finalRadiance;
 		}
 		// Evaluate MIS for Environment Map
 		// Calculate Background Colour

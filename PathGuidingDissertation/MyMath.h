@@ -71,7 +71,14 @@ public:
 	}
 
 	bool isValid() const {
-		return !(std::isnan(r) || std::isnan(g) || std::isnan(b)) && !(std::isinf(r) || std::isinf(g) || std::isinf(b));
+		// Check NaN
+		if (std::isnan(r) || std::isnan(g) || std::isnan(b)) return false;
+		// Check InF
+		if (std::isinf(r) || std::isinf(g) || std::isinf(b)) return false;
+		// Check negative channels
+		if (r < 0.f || g < 0.f || b < 0.f) return false;
+		// Checks passed, colour valid
+		return true;
 	}
 };
 
@@ -105,6 +112,11 @@ public:
 
 	// Operator Overloading - Indexing
 	float& operator[](int index) {
+		assert((index >= 0 && index < 4) && "Invalid index passed, out of bounds!");
+		return coords[index];
+	}
+
+	float operator[](int index) const {
 		assert((index >= 0 && index < 4) && "Invalid index passed, out of bounds!");
 		return coords[index];
 	}
