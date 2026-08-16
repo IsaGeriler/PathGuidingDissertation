@@ -217,7 +217,7 @@ private:
 		auto first = pathVertices.begin() + nodes[nodeIdx].leftFirst;
 		auto nth = pathVertices.begin() + nodes[nodeIdx].leftFirst + nodes[nodeIdx].used / 2;
 		auto last = pathVertices.begin() + nodes[nodeIdx].leftFirst + nodes[nodeIdx].used;
-
+		
 		// From those indexes, sort elements via a comparator
 		std::nth_element(first, nth, last, 
 			// Lambda function as a comparator, capture the split axis by value
@@ -473,7 +473,7 @@ public:
 
 	// void kNNSearch(const Vec4& hitPosition, float dynamicRadiusSq, std::priority_queue<NearestPathVertex>& maxHeap, int k)
 	template <int MAX_K>
-	void kNNSearch(const Vec4& hitPosition, float dynamicRadiusSq, HeapKNNQueue<MAX_K>& maxHeap) {
+	void kNNSearch(const Vec4& hitPosition, float& dynamicRadiusSq, HeapKNNQueue<MAX_K>& maxHeap) {
 		// Start the kNN search from the root
 		if (nodes.empty()) return;
 		int rootIdx = 0;
