@@ -36,6 +36,9 @@
 // Enable NEE or not for Incoming Radiance (Li)
 constexpr bool enableNEE = true;
 
+// Is PointBVH built?
+static bool isPointBVHBuilt = false;
+
 // Max Bounces
 static const int MAX_DEPTH = 8;
 
@@ -1000,7 +1003,7 @@ public:
 		thread_local std::vector<ForwardPassRecord> records;
 		thread_local std::vector<const PathVertex*> nearbyVertices;
 		// thread_local std::priority_queue<NearestPathVertex> maxHeap;
-		HeapKNNQueue<MAX_NEARBY_VERTICES> maxHeap;
+		thread_local HeapKNNQueue<MAX_NEARBY_VERTICES> maxHeap;
 		records.reserve(10);                          // Max depth: 8, + 2 buffer space
 		nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
 		
@@ -1028,9 +1031,12 @@ public:
 					if (pathVertex.Li.isValid() && pathVertex.Li.Lum() > 0) pathVertices.push_back(pathVertex);
 				}
 			}
-			// Update the incoming and guiding radiance so that Li-1 can use this previous Li
-			Colour emissionAndDirect = enableNEE ? (records[i].misEmission + records[i].directLighting) : records[i].emission;
-			guidingRadiance = emissionAndDirect + (records[i].bsdfWeight * guidingRadiance);
+			// Update Accumulators
+			if (enableNEE) {
+				guidingRadiance = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * guidingRadiance);
+			} else {
+				guidingRadiance = records[i].emission + (records[i].bsdfWeight * guidingRadiance);
+			}
 		}
 		return guidingRadiance.isValid() ? guidingRadiance : Colour(0.f, 0.f, 0.f);
 	}
@@ -1582,6 +1588,25 @@ public:
 		// Increment SPP and define Atomic ID Counter to battle race conditions
 		film->incrementSPP();
 		std::atomic<int> id = 0;
+		bool isGuidingPhase = (getSPP() >= learningThreshold);
+
+		#if GUIDED_PATH
+		// Build the BVH exactly once, after collecting cache estimates in the learning phase
+		if (isGuidingPhase && !isPointBVHBuilt) {
+			std::cout << "Learning phase finished. Building BVH for cached path vertices..." << std::endl;
+			std::cout << "Total cached path vertices: " << globalCacheList.size() << std::endl;
+
+			if (cacheBVH) delete cacheBVH;
+			cacheBVH = new PointBVH();
+			cacheBVH->build(std::move(globalCacheList));
+
+			// Clear Global Cache Estimates List
+			globalCacheList.clear();
+			globalCacheList.shrink_to_fit();
+			std::cout << "BVH built successfully. Entering guiding phase..." << std::endl;
+			isPointBVHBuilt = true;
+		}
+		#endif
 
 		// Get total tile count
 		unsigned int tile_size = 32;
@@ -1589,14 +1614,11 @@ public:
 		unsigned int tiles_y = (film->height + tile_size - 1u) / tile_size;
 		unsigned int total_tile_count = tiles_x * tiles_y;
 
-		// Are we in the learning phase or guiding phase?
-		std::atomic<bool> isGuidingPhase = (getSPP() >= learningThreshold);
-
 		// Threads
 		for (unsigned int i = 0; i < numProcs; ++i) {
 			threads[i] = new std::thread(
 				// Capture i by value, not reference, or else samplers[i] will go out of bounds!
-				[&, i]() {
+				[&, i, isGuidingPhase]() {
 					// Lambda function to render tiles
 					unsigned int tile_id = 0;
 					std::vector<PathVertex>& currentThreadPathVertexRecords = perThreadPathVertexRecords[i];
@@ -1641,9 +1663,6 @@ public:
 								// Check for NaN/Inf values and then Splat, Tonemap, and Draw to Pixel
 								if (!col.isValid()) continue;
 								film->splat(px, py, col);
-								unsigned char r, g, b;
-								film->tonemap(x, y, r, g, b);
-								canvas->draw(x, y, r, g, b);
 							}
 						}
 					}
@@ -1655,6 +1674,15 @@ public:
 		for (unsigned int i = 0; i < numProcs; ++i) {
 			threads[i]->join();
 			delete threads[i];
+		}
+
+		// Draw the pixels on canvas sequentially to avoid race conditions
+		for (unsigned int y = 0; y < film->height; ++y) {
+			for (unsigned int x = 0; x < film->width; ++x) {
+				unsigned char r, g, b;
+				film->tonemap(x, y, r, g, b);
+				canvas->draw(x, y, r, g, b);
+			}
 		}
 
 		#if GUIDED_PATH
@@ -1705,9 +1733,8 @@ public:
 				perThreadStats[i] = ProfilerStats();
 			}
 		}
-
 		// --- Learning Phase ---
-		if (!isGuidingPhase) {
+		else {
 			// Get the total size and allocate space on the global cache list
 			size_t total_size = 0;
 			for (auto& pathVertexRecords : perThreadPathVertexRecords) {
@@ -1726,21 +1753,7 @@ public:
 
 				// Free up the memory for the current thread's records
 				recordsList.clear();
-				recordsList.shrink_to_fit();
 			}
-		}
-
-		// Build the BVH exactly once, after collecting cache estimates in the learning phase
-		if ((getSPP() == learningThreshold - 1)) {
-			std::cout << "Learning phase finished. Building BVH for cached path vertices..." << std::endl;
-			std::cout << "Total cached path vertices: " << globalCacheList.size() << std::endl;
-			cacheBVH = new PointBVH();
-			cacheBVH->build(std::move(globalCacheList));
-
-			// Clear Global Cache Estimates List
-			globalCacheList.clear();
-			globalCacheList.shrink_to_fit();
-			std::cout << "BVH built successfully. Entering guiding phase..." << std::endl;
 		}
 		#endif
 	}
