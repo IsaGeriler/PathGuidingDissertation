@@ -1018,7 +1018,8 @@ public:
 
 		// --- 2. Backpropagation Phase ---
 		// Store Each Path Vertex to the vector via Backpropagation
-		Colour guidingRadiance(0.f, 0.f, 0.f);
+		Colour trainingRadiance(0.f, 0.f, 0.f);
+		Colour pixelRadiance(0.f, 0.f, 0.f);
 		for (int i = (int)(records.size() - 1); i >= 0; i--) {
 			if (!isGuidingPhase) {
 				// Learning Phase - Data Collection
@@ -1027,18 +1028,20 @@ public:
 					pathVertex.position = records[i].position;
 					pathVertex.normal = records[i].normal;
 					pathVertex.wi = records[i].wi;
-					pathVertex.Li = guidingRadiance;
+					pathVertex.Li = trainingRadiance;
 					if (pathVertex.Li.isValid() && pathVertex.Li.Lum() > 0) pathVertices.push_back(pathVertex);
 				}
 			}
 			// Update Accumulators
 			if (enableNEE) {
-				guidingRadiance = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * guidingRadiance);
+				trainingRadiance = records[i].misEmission + (records[i].bsdfWeight * trainingRadiance);
+				pixelRadiance = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * pixelRadiance);
 			} else {
-				guidingRadiance = records[i].emission + (records[i].bsdfWeight * guidingRadiance);
+				trainingRadiance = records[i].emission + (records[i].bsdfWeight * trainingRadiance);
+				pixelRadiance = trainingRadiance;
 			}
 		}
-		return guidingRadiance.isValid() ? guidingRadiance : Colour(0.f, 0.f, 0.f);
+		return pixelRadiance.isValid() ? pixelRadiance : Colour(0.f, 0.f, 0.f);
 	}
 
 	// --- NEW METHOD ---

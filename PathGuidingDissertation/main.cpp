@@ -436,7 +436,7 @@ static void runTest() {
 
 int main(int argc, char* argv[]) {
 	// Run testing code first before rendering any stuff!
-	// runTest();
+	runTest();
 
 	// Note - Test on these scenes
 	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase +
