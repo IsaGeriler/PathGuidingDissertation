@@ -928,14 +928,15 @@ public:
 				return emission * wind;
 			}
 
+			bool isGlossy = false;
+			float pdfBsdf = 0.f;
+			Colour fBsdf(0.f, 0.f, 0.f);
+			Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf, &isGlossy);
+
 			// Perfect Specular or Glossy Surfaces
-			bool requiresRayTrace = (shadingData.bsdf->isPureSpecular() || shadingData.bsdf->isHighlyGlossy());
+			bool requiresRayTrace = (shadingData.bsdf->isPureSpecular() || isGlossy);
 			if (requiresRayTrace) {
 				// Specular Surface
-				float pdfBsdf = 0.f;
-				Colour fBsdf(0.f, 0.f, 0.f);
-				Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
-
 				if (pdfBsdf <= EPSILON) return Colour(0.f, 0.f, 0.f);
 				
 				int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
@@ -959,10 +960,6 @@ public:
 			if (!isFinalGatherRay) {
 				// Final Gathering Stage to Battle with Blurry Images and Light Leaks
 				// Shoot extra rays from first non-specular hit point
-				float pdfBsdf = 0.f;
-				Colour fBsdf(0.f, 0.f, 0.f);
-				Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
-
 				if (pdfBsdf > EPSILON) {
 					// Shoot final gather ray and apply the formula as usual
 					float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));

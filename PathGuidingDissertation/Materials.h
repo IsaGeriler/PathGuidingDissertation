@@ -121,12 +121,12 @@ public:
 class BSDF {
 public:
 	Colour emission;
-	virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) = 0;
+	// virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) = 0;
+	virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) = 0;
 	virtual void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) = 0;
 	virtual Colour evaluate(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual float PDF(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual bool isPureSpecular() = 0;
-	virtual bool isHighlyGlossy() const { return false; }
 	virtual bool isTwoSided() = 0;
 	bool isLight() { return emission.Lum() > 0.f; }
 	void addLight(Colour _emission) { emission = _emission; }
@@ -144,7 +144,7 @@ public:
 	DiffuseBSDF(Texture* _albedo) { albedo = _albedo; }
 
 	// Methods
-	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
+	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Sample incoming direction (z-up coordinate system, local space)
 		float r1 = sampler->next();
 		float r2 = sampler->next();
@@ -209,7 +209,7 @@ public:
 	MirrorBSDF(Texture* _albedo) { albedo = _albedo; }
 
 	// Methods
-	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
+	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Convert shadingData.wo to local space
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
@@ -267,7 +267,7 @@ public:
 	}
 
 	// Methods
-	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
+	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Convert shadingData.wo to local space
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		
@@ -298,6 +298,7 @@ public:
 		Vec4 wi = shadingData.frame.toWorld(wiLocal);
 		reflectedColour = evaluate(shadingData, wi);
 		pdf = PDF(shadingData, wi);
+		if (sampledGlossy != nullptr) *sampledGlossy = alpha < 0.12f;
 		return wi;
 	}
 
@@ -381,7 +382,6 @@ public:
 	}
 
 	bool isPureSpecular() { return alpha < EPSILON; }
-	bool isHighlyGlossy() const override { return alpha < 0.12f; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -401,7 +401,7 @@ public:
 	}
 
 	// Methods
-	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
+	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Convert shadingData.wo to local space
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		
@@ -502,7 +502,7 @@ public:
 	}
 
 	// Methods
-	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
+	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Convert shadingData.wo to the local space
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
@@ -593,6 +593,7 @@ public:
 			Vec4 wi = shadingData.frame.toWorld(wiLocal);
 			reflectedColour = evaluate(shadingData, wi);
 			pdf = PDF(shadingData, wi);
+			if (sampledGlossy != nullptr) *sampledGlossy = alpha < 0.12f;
 			return wi;
 		}
 	}
@@ -751,7 +752,6 @@ public:
 	}
 
 	bool isPureSpecular() { return alpha < EPSILON; }
-	bool isHighlyGlossy() const override { return alpha < 0.12f; }
 	bool isTwoSided() { return false; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -770,7 +770,7 @@ public:
 	}
 
 	// Methods
-	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
+	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Sample incoming direction (z-up coordinate system, local space)
 		// Using DiffuseBSDF's cosine weighted sampling 
 		float r1 = sampler->next();
@@ -863,7 +863,7 @@ public:
 	}
 
 	// Methods
-	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
+	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Get outcoming direction
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		Vec4 wiLocal(0.f, 0.f, 0.f);
@@ -891,11 +891,13 @@ public:
 			if (woLocal.z <= 0.f) hLocal = -hLocal;
 			wiLocal = hLocal * 2.f * Dot(woLocal, hLocal) - woLocal;
 			if (wiLocal.z * woLocal.z <= 0.f || Dot(woLocal, hLocal) <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+			if (sampledGlossy != nullptr) *sampledGlossy = alpha < 0.12f;
 		} else {
 			// Diffuse Part - Sample wi with cosine hemisphere
 			wiLocal = SamplingDistributions::cosineSampleHemisphere(r1, r2);
 			// Flip if it's below the surface
 			if (woLocal.z <= 0.f) wiLocal = -wiLocal;
+			if (sampledGlossy != nullptr) *sampledGlossy = false;
 		}
 		Vec4 wi = shadingData.frame.toWorld(wiLocal);
 		pdf = PDF(shadingData, wi);
@@ -1027,7 +1029,7 @@ public:
 	}
 
 	// Methods
-	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) {
+	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Add code to include layered sampling
 		// return base->sample(shadingData, sampler, reflectedColour, pdf);
 		// Convert shaingData.wo and base->sample to local space
