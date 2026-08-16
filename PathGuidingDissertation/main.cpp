@@ -436,7 +436,7 @@ static void runTest() {
 
 int main(int argc, char* argv[]) {
 	// Run testing code first before rendering any stuff!
-	runTest();
+	// runTest();
 
 	// Note - Test on these scenes
 	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase +
@@ -471,16 +471,12 @@ int main(int argc, char* argv[]) {
 	// -- I don't know why it does not work Scene
 	//std::string sceneName = "../Scenes/teapot-full";
 
-	Scene* scene = loadScene(sceneName);
-	GamesEngineeringBase::Window canvas;
-	canvas.create((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, "Tracer", false);
-	RayTracer rt;
-	rt.init(scene, &canvas);
-	bool running = true;
-	GamesEngineeringBase::Timer timer;
-
-	unsigned int SPP = rt.maxSPP;  // Adjust maximum SPP inside Renderer.h, this is modified to ease up Path Guiding (unless prompted in CMD)
+	//unsigned int SPP = 8192;
+	unsigned int SPP = 128;
 	std::string filename = "GI.hdr";
+	//std::string method = "path_trace";
+	std::string method = "photon_map";
+	//std::string method = "path_guide";
 
 	if (argc > 1) {
 		std::unordered_map<std::string, std::string> args;
@@ -498,19 +494,30 @@ int main(int argc, char* argv[]) {
 				std::cerr << "Warning: Ignoring unexpected argument '" << arg << "'\n";
 			}
 		}
-
+		
 		for (const auto& pair : args) {
 			if (pair.first == "-scene") {
 				sceneName = pair.second;
 			}
-			if (pair.first == "-outputFilename") {
+			else if (pair.first == "-outputFilename") {
 				filename = pair.second;
 			}
-			if (pair.first == "-SPP") {
+			else if (pair.first == "-SPP") {
 				SPP = stoi(pair.second);
+			}
+			else if (pair.first == "-method") {
+				method = pair.second;
 			}
 		}
 	}
+
+	Scene* scene = loadScene(sceneName);
+	GamesEngineeringBase::Window canvas;
+	canvas.create((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, "Tracer", false);
+	RayTracer rt;
+	rt.init(scene, &canvas, method, SPP);
+	bool running = true;
+	GamesEngineeringBase::Timer timer;
 
 	while (running) {
 		canvas.checkInput();

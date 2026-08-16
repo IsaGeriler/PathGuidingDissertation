@@ -27,8 +27,6 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define PHOTON_MAPPING false
-#define GUIDED_PATH true
 #define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
 #define DEBUG_BVH true
@@ -632,6 +630,7 @@ public:
 	MTRandom* samplers;
 	std::thread** threads;
 	unsigned int numProcs;
+	std::string renderMethod = "path_trace";
 
 	// Cached vertices will be stored in a BVH structure
 	PointBVH* cacheBVH;
@@ -639,8 +638,8 @@ public:
 	// Ground Truth: 8192/16384					(should really be an absurd number to eliminate variance)
 	// Testing SPPs: 128/256/512/1024/2048/4096 (render, and compare error metrics with the groung truth)
 	// int maxSPP = 8192;
-	int maxSPP = 128;
-	int learningThreshold = maxSPP / 8;
+	int maxSPP;
+	int learningThreshold;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
 	std::vector<std::vector<PathVertex>> perThreadPathVertexRecords;
@@ -653,7 +652,7 @@ public:
 	PhotonMap globalPhotonMap;
 	PhotonMap causticPhotonMap;
 
-	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas) {
+	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas, std::string _method, int _spp) {
 		scene = _scene;
 		canvas = _canvas;
 		film = new Film();
@@ -666,15 +665,21 @@ public:
 		perThreadQTrees = new QTree[numProcs];
 		perThreadPathVertexRecords.resize(numProcs);
 		perThreadStats.resize(numProcs);
+
+		renderMethod = _method;
+		maxSPP = _spp;
+		learningThreshold = maxSPP / 8;
+
 		clear();
+
 		// Assuming our scene is ready to go
 		// Shoot Photons here for Photon Mapping
-		#if PHOTON_MAPPING
-		std::cout << "Photon Mapping First Pass: Shooting Photons...\n";
-		shootPhotons(samplers, NUM_OF_PHOTONS_TO_SHOOT);
-		std::cout << "Photon Mapping First Pass Completed! Global Photon Map Size: " << globalPhotonMap.getSize() 
-				  << " | Caustic Photon Map Size: " << causticPhotonMap.getSize() << std::endl;
-		#endif
+		if (renderMethod == "photon_map") {
+			std::cout << "Photon Mapping First Pass: Shooting Photons...\n";
+			shootPhotons(samplers, NUM_OF_PHOTONS_TO_SHOOT);
+			std::cout << "Photon Mapping First Pass Completed! Global Photon Map Size: " << globalPhotonMap.getSize()
+				<< " | Caustic Photon Map Size: " << causticPhotonMap.getSize() << std::endl;
+		}
 	}
 
 	void clear() {
@@ -727,7 +732,9 @@ public:
 				float wd = weightPowerHeuristics(pALight, pABsdf);
 
 				// Multiply terms, divide by pALight, and return
-				return (emittedColour * bsdf * geometryTerm * wd) / pALight;
+				Colour result = (emittedColour * bsdf * geometryTerm * wd) / pALight;
+				if (!result.isValid()) return Colour(0.f, 0.f, 0.f);
+				return result;
 			}
 			return Colour(0.f, 0.f, 0.f);
 		}
@@ -764,7 +771,9 @@ public:
 				float wd = weightPowerHeuristics(pALight, pABsdf);
 
 				// Multiply terms, divide by pALight, and return
-				return (emittedColour * bsdf * cosTheta * wd) / pALight;
+				Colour result = (emittedColour * bsdf * cosTheta * wd) / pALight;
+				if (!result.isValid()) return Colour(0.f, 0.f, 0.f);
+				return result;
 			}
 			return Colour(0.f, 0.f, 0.f);
 		}
@@ -1593,23 +1602,23 @@ public:
 		std::atomic<int> id = 0;
 		bool isGuidingPhase = (getSPP() >= learningThreshold);
 
-		#if GUIDED_PATH
-		// Build the BVH exactly once, after collecting cache estimates in the learning phase
-		if (isGuidingPhase && !isPointBVHBuilt) {
-			std::cout << "Learning phase finished. Building BVH for cached path vertices..." << std::endl;
-			std::cout << "Total cached path vertices: " << globalCacheList.size() << std::endl;
+		if (renderMethod == "path_guide") {
+			// Build the BVH exactly once, after collecting cache estimates in the learning phase
+			if (isGuidingPhase && !isPointBVHBuilt) {
+				std::cout << "Learning phase finished. Building BVH for cached path vertices..." << std::endl;
+				std::cout << "Total cached path vertices: " << globalCacheList.size() << std::endl;
 
-			if (cacheBVH) delete cacheBVH;
-			cacheBVH = new PointBVH();
-			cacheBVH->build(std::move(globalCacheList));
+				if (cacheBVH) delete cacheBVH;
+				cacheBVH = new PointBVH();
+				cacheBVH->build(std::move(globalCacheList));
 
-			// Clear Global Cache Estimates List
-			globalCacheList.clear();
-			globalCacheList.shrink_to_fit();
-			std::cout << "BVH built successfully. Entering guiding phase..." << std::endl;
-			isPointBVHBuilt = true;
+				// Clear Global Cache Estimates List
+				globalCacheList.clear();
+				globalCacheList.shrink_to_fit();
+				std::cout << "BVH built successfully. Entering guiding phase..." << std::endl;
+				isPointBVHBuilt = true;
+			}
 		}
-		#endif
 
 		// Get total tile count
 		unsigned int tile_size = 32;
@@ -1642,26 +1651,30 @@ public:
 								float px = x + samplers[i].next();  // + 0.5f
 								float py = y + samplers[i].next();  // + 0.5f
 								Ray ray = scene->camera.generateRay(px, py);
+								Colour col(0.f, 0.f, 0.f);
 
-								// View Barycentrics / Shading Normals / Albedo / Direct Lighting / Path Trace / Path Guiding
-								// Colour col = viewBarycentrics(ray);
-								// Colour col = viewNormals(ray);
-								// Colour col = albedo(ray);
-								// Colour col = direct(ray, &samplers[i]);
-
-								#if PHOTON_MAPPING
 								// Photton Mapping [Jensen 1995]
-								Colour col = traceCameraRay(ray, &samplers[i]);
-								#elif GUIDED_PATH
-								// Our novel Path Guiding in PSS
-								Colour col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
-								if (isGuidingPhase && getSPP() == learningThreshold && x == film->width / 2 && y == film->height / 2) {
-									viewPrimarySampleSpace(ray, cacheBVH, MAX_NEARBY_VERTICES);
+								if (renderMethod == "photon_map") {
+									col = traceCameraRay(ray, &samplers[i]);
 								}
-								#else
+								// Our novel Path Guiding in PSS
+								else if (renderMethod == "path_guide") {
+									col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
+									if (isGuidingPhase && getSPP() == learningThreshold && x == film->width / 2 && y == film->height / 2) {
+										viewPrimarySampleSpace(ray, cacheBVH, MAX_NEARBY_VERTICES);
+									}
+								}
 								// Unidirectional Path Trace
-								Colour col = pathTrace(ray, &samplers[i]);
-								#endif
+								else if (renderMethod == "path_trace") {
+									col = pathTrace(ray, &samplers[i]);
+								}
+								// DEBUG - View Barycentrics / Shading Normals / Albedo / Direct Lighting
+								else {
+									// col = viewBarycentrics(ray);
+									// col = viewNormals(ray);
+									// col = albedo(ray);
+									col = direct(ray, &samplers[i]);
+								}
 
 								// Check for NaN/Inf values and then Splat, Tonemap, and Draw to Pixel
 								if (!col.isValid()) continue;
@@ -1688,77 +1701,77 @@ public:
 			}
 		}
 
-		#if GUIDED_PATH
-		// --- Guiding Phase ---
-		if (isGuidingPhase) {
-			// Generate the profiling record	
-			double totalBVHTime = 0.0;
-			double totalQTreeTime = 0.0;
-			double totalBSDFInvertTime = 0.0;
-			long long totalGuidedPathBounces = 0;
+		if (renderMethod == "path_guide") {
+			// --- Guiding Phase ---
+			if (isGuidingPhase) {
+				// Generate the profiling record	
+				double totalBVHTime = 0.0;
+				double totalQTreeTime = 0.0;
+				double totalBSDFInvertTime = 0.0;
+				long long totalGuidedPathBounces = 0;
 
-			// Retrieve all blocks obtained from the threads
-			for (int i = 0; i < numProcs; i++) {
-				totalBVHTime += perThreadStats[i].bvhSearchTimeMs;
-				totalQTreeTime += perThreadStats[i].qTreeBuildTimeMs;
-				totalBSDFInvertTime += perThreadStats[i].bsdfInvertTimeMs;
-				totalGuidedPathBounces += perThreadStats[i].guidedPathBounceCount;
+				// Retrieve all blocks obtained from the threads
+				for (int i = 0; i < numProcs; i++) {
+					totalBVHTime += perThreadStats[i].bvhSearchTimeMs;
+					totalQTreeTime += perThreadStats[i].qTreeBuildTimeMs;
+					totalBSDFInvertTime += perThreadStats[i].bsdfInvertTimeMs;
+					totalGuidedPathBounces += perThreadStats[i].guidedPathBounceCount;
+				}
+
+				// Divide by thread count to average everything
+				double avgBVHTime = totalBVHTime / numProcs;
+				double avgQTreeTime = totalQTreeTime / numProcs;
+				double avgBSDFInvertTime = totalBSDFInvertTime / numProcs;
+
+				// Print the profiling report
+				std::cout << "\n=========================================\n";
+				std::cout << "      PATH GUIDING PROFILING REPORT      \n";
+				std::cout << "=========================================\n";
+				std::cout << "Total Guided Path Bounces : " << totalGuidedPathBounces << std::endl;
+				std::cout << "Average BVH Search Time   : " << avgBVHTime << " ms / frame" << std::endl;
+				std::cout << "Average QTree Build Time  : " << avgQTreeTime << " ms / frame" << std::endl;
+				std::cout << "Average BSDF Invert Time  : " << avgBSDFInvertTime << " ms / frame" << std::endl;
+
+				if (totalGuidedPathBounces > 0) {
+					double bvhSearchPerBounce = (totalBVHTime * 1000.0) / totalGuidedPathBounces;
+					double qTreeBuildPerBounce = (totalQTreeTime * 1000.0) / totalGuidedPathBounces;
+					double bsdfInvertPerBounce = (totalBSDFInvertTime * 1000.0) / totalGuidedPathBounces;
+					std::cout << "-----------------------------------------\n";
+					std::cout << "Time Per Bounce Stats:\n";
+					std::cout << "  BVH Search  : " << bvhSearchPerBounce << " microseconds" << std::endl;
+					std::cout << "  QTree Build : " << qTreeBuildPerBounce << " microseconds" << std::endl;
+					std::cout << "  BSDF Invert : " << bsdfInvertPerBounce << " microseconds" << std::endl;
+				}
+				std::cout << "=========================================\n\n";
+
+				// Reset the records
+				for (int i = 0; i < numProcs; i++) {
+					perThreadStats[i] = ProfilerStats();
+				}
 			}
+			// --- Learning Phase ---
+			else {
+				// Get the total size and allocate space on the global cache list
+				size_t total_size = 0;
+				for (auto& pathVertexRecords : perThreadPathVertexRecords) {
+					total_size += pathVertexRecords.size();
+				}
+				globalCacheList.reserve(globalCacheList.size() + total_size);
 
-			// Divide by thread count to average everything
-			double avgBVHTime = totalBVHTime / numProcs;
-			double avgQTreeTime = totalQTreeTime / numProcs;
-			double avgBSDFInvertTime = totalBSDFInvertTime / numProcs;
+				// Carry the data obtained from tiled rendering to the global cache list
+				for (auto& recordsList : perThreadPathVertexRecords) {
+					// Insert the records in the global cache list
+					globalCacheList.insert(
+						globalCacheList.end(),
+						std::make_move_iterator(recordsList.begin()),
+						std::make_move_iterator(recordsList.end())
+					);
 
-			// Print the profiling report
-			std::cout << "\n=========================================\n";
-			std::cout << "      PATH GUIDING PROFILING REPORT      \n";
-			std::cout << "=========================================\n";
-			std::cout << "Total Guided Path Bounces : " << totalGuidedPathBounces << std::endl;
-			std::cout << "Average BVH Search Time   : " << avgBVHTime << " ms / frame" << std::endl;
-			std::cout << "Average QTree Build Time  : " << avgQTreeTime << " ms / frame" << std::endl;
-			std::cout << "Average BSDF Invert Time  : " << avgBSDFInvertTime << " ms / frame" << std::endl;
-
-			if (totalGuidedPathBounces > 0) {
-				double bvhSearchPerBounce = (totalBVHTime * 1000.0) / totalGuidedPathBounces;
-				double qTreeBuildPerBounce = (totalQTreeTime * 1000.0) / totalGuidedPathBounces;
-				double bsdfInvertPerBounce = (totalBSDFInvertTime * 1000.0) / totalGuidedPathBounces;
-				std::cout << "-----------------------------------------\n";
-				std::cout << "Time Per Bounce Stats:\n";
-				std::cout << "  BVH Search  : " << bvhSearchPerBounce << " microseconds" << std::endl;
-				std::cout << "  QTree Build : " << qTreeBuildPerBounce << " microseconds" << std::endl;
-				std::cout << "  BSDF Invert : " << bsdfInvertPerBounce << " microseconds" << std::endl;
-			}
-			std::cout << "=========================================\n\n";
-
-			// Reset the records
-			for (int i = 0; i < numProcs; i++) {
-				perThreadStats[i] = ProfilerStats();
+					// Free up the memory for the current thread's records
+					recordsList.clear();
+				}
 			}
 		}
-		// --- Learning Phase ---
-		else {
-			// Get the total size and allocate space on the global cache list
-			size_t total_size = 0;
-			for (auto& pathVertexRecords : perThreadPathVertexRecords) {
-				total_size += pathVertexRecords.size();
-			}
-			globalCacheList.reserve(globalCacheList.size() + total_size);
-
-			// Carry the data obtained from tiled rendering to the global cache list
-			for (auto& recordsList : perThreadPathVertexRecords) {
-				// Insert the records in the global cache list
-				globalCacheList.insert(
-					globalCacheList.end(),
-					std::make_move_iterator(recordsList.begin()),
-					std::make_move_iterator(recordsList.end())
-				);
-
-				// Free up the memory for the current thread's records
-				recordsList.clear();
-			}
-		}
-		#endif
 	}
 
 	int getSPP() { return film->SPP; }
