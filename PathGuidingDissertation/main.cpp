@@ -575,7 +575,7 @@ int main(int argc, char* argv[]) {
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		double elapsedSeconds = std::chrono::duration<double>(currentTime - startTime).count();
 
-		bool sppReached = (SPP >= rt.getSPP());
+		bool sppReached = (rt.getSPP() >= SPP);
 		bool timeReached = (timeLimitSeconds > 0.0 && elapsedSeconds >= timeLimitSeconds);
 		
 		if (sppReached || timeReached) {
