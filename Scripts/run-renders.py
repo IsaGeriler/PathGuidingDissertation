@@ -27,6 +27,10 @@ METHODS = ["path_trace", "photon_map", "path_guide"]
 # Sample counts for convergence testing (Equal-Sample test)
 # TO:DO - Add 512, 1024 (and 2048 if enough time!) [Path Guide is slow as a turtle!]
 SPP_LIST = [64, 128, 256]
+# SPP_LIST = [64, 128, 256, 512, 1024, 2048]
+
+# Time limits (Equal-Time test)
+TIME_LIMIT_LIST = [30.0, 60.0, 180.0, 300.0, 900.0, 1800.0]
 # --- Configuration End ---
 
 # --- Batch Execution ---
@@ -67,9 +71,10 @@ with open(LOG_CSV, mode="a", newline="") as csv_file:
                     "-method", method,
                     "-SPP", str(spp),
                     "-outputFilename", out_filepath
+                    # "-timeLimitSecond", # 60.0, 3600.0
                 ]
 
-                print(f"\n[{current_count}/{total_renders}] Rendering: {scene_name} | Method: {method} | SPP: {spp}")
+                print(f"\n[{current_count}/{total_renders}] Rendering: {scene_name} | Method: {method} | SPP: {spp} ")
                 print(f"Running command: {' '.join(cmd)}")
 
                 # Measure exact execution time

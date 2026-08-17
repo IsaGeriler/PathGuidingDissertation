@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <chrono>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -477,6 +478,7 @@ int main(int argc, char* argv[]) {
 	//std::string method = "path_trace";
 	std::string method = "photon_map";
 	//std::string method = "path_guide";
+	double timeLimitSeconds = -1.0;  // Seconds!
 
 	if (argc > 1) {
 		std::unordered_map<std::string, std::string> args;
@@ -508,6 +510,9 @@ int main(int argc, char* argv[]) {
 			else if (pair.first == "-method") {
 				method = pair.second;
 			}
+			else if (pair.first == "-timeLimitSecond") {
+				timeLimitSeconds = stod(pair.second);
+			}
 		}
 	}
 
@@ -518,6 +523,9 @@ int main(int argc, char* argv[]) {
 	rt.init(scene, &canvas, method, SPP);
 	bool running = true;
 	GamesEngineeringBase::Timer timer;
+
+	// Start the timer before the loop
+	auto startTime = std::chrono::high_resolution_clock::now();
 
 	while (running) {
 		canvas.checkInput();
@@ -562,7 +570,20 @@ int main(int argc, char* argv[]) {
 			std::string ldrFilename = filename.substr(0, pos) + ".png";
 			rt.savePNG(ldrFilename);
 		}
-		if (SPP == rt.getSPP()) {
+
+		// Equal SPP or Equal Time
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		double elapsedSeconds = std::chrono::duration<double>(currentTime - startTime).count();
+
+		bool sppReached = (SPP >= rt.getSPP());
+		bool timeReached = (timeLimitSeconds > 0.0 && elapsedSeconds >= timeLimitSeconds);
+		
+		if (sppReached || timeReached) {
+			std::cout << "\n[Render Complete] Method: " << method
+				<< " | Achieved SPP: " << SPP
+				<< " | Time: " << elapsedSeconds << "s"
+				<< " (Exit Reason: " << (timeReached ? "Time Limit" : "Target SPP") << " Reached)"
+				<< std::endl;
 			// Save both HDR and LDR (SDR) images
 			size_t pos = filename.find_last_of('.');
 			std::string ldrFilename = filename.substr(0, pos) + ".png";

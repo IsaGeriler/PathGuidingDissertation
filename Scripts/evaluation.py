@@ -1,5 +1,6 @@
 # --- Import the necessary libraries for the evaluation script ---
 import os
+import re
 # By default, OpenCV library has this flag disabled, and FLIP does not support .hdr files
 # We need to convert .hdr files to .exr when evaluating FLIP, thus enabling this flag manually
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
@@ -12,31 +13,23 @@ from skimage.metrics import structural_similarity as ssim
 
 # --- Functions for metric evaluations ---
 def calculate_mse(test_hdr, gt_hdr):
-    # Mean Square Error
     return np.mean((test_hdr - gt_hdr) ** 2)
 
 def calculate_rmse(test_hdr, gt_hdr):
-    # Relative Mean Square Error (just square root of MSE)
     return np.sqrt(calculate_mse(test_hdr, gt_hdr))
 
 def calculate_mrse(test_hdr, gt_hdr, epsilon=1e-2):
-    # Standart Relative MSE for Rendering
     numerator = (test_hdr - gt_hdr) ** 2
     denominator = gt_hdr ** 2 + epsilon
     return np.mean(numerator / denominator)
 
 def calculate_rrmse(test_hdr, gt_hdr, epsilon=1e-2):
-    # Square Root of MRSE
     return np.sqrt(calculate_mrse(test_hdr, gt_hdr, epsilon))
 
 def calculate_mae(test_hdr, gt_hdr):
-    # Mean Absolute Error (L1 Loss)
-    # Using this as MC Rendering may yield fireflies
-    # MAE is less sensitive to this, compared to MSE
     return np.mean(np.abs(test_hdr - gt_hdr))
 
 def calculate_psnr(test_hdr, gt_hdr):
-    # Peak Signal to Noise Ratio
     mse = calculate_mse(test_hdr, gt_hdr)
     if mse == 0:
         return float('inf')
@@ -44,7 +37,6 @@ def calculate_psnr(test_hdr, gt_hdr):
     return 20 * np.log10(max_pixel / np.sqrt(mse))
 
 def calculate_ssim(test_png_filepath, gt_png_filepath):
-    # Structural Similarity (Human Perception)
     test_ldr = cv2.imread(test_png_filepath, cv2.IMREAD_GRAYSCALE)
     gt_ldr = cv2.imread(gt_png_filepath, cv2.IMREAD_GRAYSCALE)
 
@@ -55,59 +47,41 @@ def calculate_ssim(test_png_filepath, gt_png_filepath):
 
 # --- FLIP and EXR Conversion Helpers ---
 def create_temp_exr(hdr_pixels, output_path):
-    # imageio loads the image as RGB, OpenCV saves as BGR.
-    # We convert it to ensure colors are correct.
     bgr_pixels = cv2.cvtColor(hdr_pixels, cv2.COLOR_RGB2BGR)
     cv2.imwrite(output_path, bgr_pixels)
 
-def run_flip(test_hdr_pixels, gt_hdr_pixels, test_base_path, gt_base_path):
-    # Setup paths for temporary EXR files
+def run_flip(test_hdr_pixels, gt_hdr_pixels, test_base_path, gt_base_path, flip_output_dir):
     temp_test_exr = f"{test_base_path}_TEMP.exr"
     temp_gt_exr = f"{gt_base_path}_TEMP.exr"
     
-    # Save the EXR files
     create_temp_exr(test_hdr_pixels, temp_test_exr)
     if not os.path.exists(temp_gt_exr):
         create_temp_exr(gt_hdr_pixels, temp_gt_exr)
 
-    # Figure out where to save the FLIP Error Map
-    output_dir = os.path.dirname(test_base_path)
     basename = os.path.basename(test_base_path)
-    flip_dir = os.path.join(output_dir, "FLIP")
-    error_map_path = os.path.join(flip_dir, f"{basename}_flip_map.png")
-
-    os.makedirs(flip_dir, exist_ok=True)
+    error_map_path = os.path.join(flip_output_dir, f"{basename}_flip_map.png")
+    os.makedirs(flip_output_dir, exist_ok=True)
 
     try:
-        # Call NVIDIA's FLIP API
         metrics = flip_evaluate(temp_gt_exr, temp_test_exr, "HDR")
-        
-        # metrics[0] -> The FLIP Error Map (RGB Array)
-        # metrics[1] -> The Mean FLIP Score
         error_map_array = metrics[0]
         flip_val = float(metrics[1])
         
-        # Convert the float array (0.0 to 1.0) into a standard 8-bit PNG (0 to 255)
         error_map_8bit = np.clip(error_map_array * 255.0, 0, 255).astype(np.uint8)
-        
-        # We use imageio (iio) because it natively understands RGB arrays
         iio.imwrite(error_map_path, error_map_8bit)       
     except Exception as e:
-        print(f"FLIP API Failed: {e}")
+        print(f"FLIP API Failed for {basename}: {e}")
         flip_val = -1.0
         
-    # Clean up the temporary EXR files
     if os.path.exists(temp_test_exr):
         os.remove(temp_test_exr)
     return flip_val
 
 # --- Main function ---
-def evaluate_scene(test_name, gt_base_path, test_base_path):
-    # Load HDR images
+def evaluate_scene(gt_base_path, test_base_path, results_dir):
     gt_hdr = iio.imread(f"{gt_base_path}.hdr").astype(np.float32)
     test_hdr = iio.imread(f"{test_base_path}.hdr").astype(np.float32)
 
-    # Compute metrics
     mse_val = calculate_mse(test_hdr, gt_hdr)
     rmse_val = calculate_rmse(test_hdr, gt_hdr)
     mrse_val = calculate_mrse(test_hdr, gt_hdr)
@@ -116,17 +90,28 @@ def evaluate_scene(test_name, gt_base_path, test_base_path):
     psnr_val = calculate_psnr(test_hdr, gt_hdr)
     ssim_val = calculate_ssim(f"{test_base_path}.png", f"{gt_base_path}.png")
     
-    # Pass the actual pixel data and paths to our updated FLIP function
-    flip_val = run_flip(test_hdr, gt_hdr, test_base_path, gt_base_path)
+    # Save FLIP maps in the new Results structure
+    flip_dir = os.path.join(results_dir, "FLIP")
+    flip_val = run_flip(test_hdr, gt_hdr, test_base_path, gt_base_path, flip_dir)
 
-    folder_name = os.path.basename(test_base_path)
-    parts = folder_name.split('_')
+    # --- Robust Naming Parsing ---
+    # Expected format: scene_method1_method2_128spp
+    filename = os.path.basename(test_base_path)
+    parts = filename.split('_')
+    
+    scene_name = parts[0]
+    
+    # Extract only the numbers from the last part (handles "128", "128spp", "SPP128", etc.)
+    spp_match = re.search(r'\d+', parts[-1])
+    spp = int(spp_match.group()) if spp_match else 0
+    
+    # Method is everything between scene name and SPP
+    method = "_".join(parts[1:-1])
 
     row = {
-        "Scene": test_name,
-        "Method": parts[1],
-        "SPP": int(parts[2]),
-        "QTree Depth": int(parts[3]) if len(parts) > 3 and parts[3] else "-",
+        "Scene": scene_name,
+        "Method": method,
+        "SPP": spp,
         "MSE": mse_val,
         "RMSE": rmse_val,
         "MRSE": mrse_val,
@@ -139,43 +124,96 @@ def evaluate_scene(test_name, gt_base_path, test_base_path):
     return row
 
 if __name__ == "__main__":
-    # Absolute path logic ensuring the script never gets lost
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(script_dir)
-
-    # Define the Ground Truth (scenenamePathTrace8192SPP)
-    gt_base = os.path.join(repo_root, "Images", "GroundTruths", "CornellBoxPathTrace8192SPP")
-    # gt_base = os.path.join(repo_root, "Images", "GroundTruths", "KitchenPathTrace8192SPP")
-
-    # Define the test case directories
-    test_bases = [
-        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "CornellBox_PathGuide_128_2"),
-        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "CornellBox_PathTrace_128"),
-        os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "CornellBox_PhotonMap_128")
-        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_128"),
-        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuideNew_128"),
-        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_128")
-        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathGuide_512"),
-        #os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "Kitchen_PathTrace_512")
-    ]
-
-    # Populate the calculated results in a list
-    results = []
-    for test in test_bases:
-        # row_data = evaluate_scene("Kitchen", gt_base, test)
-        row_data = evaluate_scene("CornellBox", gt_base, test)
-        results.append(row_data)
-
-    # Save CSV using absolute path
-    df = pd.DataFrame(results)
-    csv_path = os.path.join(script_dir, "experiment_results.csv")
-    df.to_csv(csv_path, index=False)
     
-    # Cleanup the GT temp file
-    temp_gt_exr = f"{gt_base}_TEMP.exr"
-    if os.path.exists(temp_gt_exr):
-        os.remove(temp_gt_exr)
+    # Base directory where all evaluation outputs will go
+    master_results_dir = os.path.join(script_dir, "EvaluationResults")
 
-    # Print the results in the terminal  
-    print(f"\nSaved results to: {csv_path}\n")
-    print(df)
+    # --- Configuration for Multiple Scenes ---
+    # Add Dining Room and Classroom here after implementing Environment Map for Photon Map
+    SCENES_CONFIG = {
+        "CornellBox": {
+            "gt_base": os.path.join(repo_root, "Images", "GroundTruths", "CornellBoxPathTrace8192SPP"),
+            "tests": [
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_trace_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_photon_map_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_trace_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_photon_map_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_256spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_trace_256spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_photon_map_256spp")
+            ]
+        },
+        "Kitchen": {
+            "gt_base": os.path.join(repo_root, "Images", "GroundTruths", "KitchenPathTrace8192SPP"),
+            "tests": [
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_trace_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_photon_map_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_trace_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_photon_map_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_256spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_trace_256spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_photon_map_256spp")
+            ]
+        },
+        "Staircase": {
+            "gt_base": os.path.join(repo_root, "Images", "GroundTruths", "StaircasePathTrace8192SPP"),
+            "tests": [
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_trace_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_photon_map_64spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_trace_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_photon_map_128spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_256spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_trace_256spp"),
+                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_photon_map_256spp")
+            ]
+        }
+    }
+
+    # Iterate through every scene in the config
+    for scene_id, config in SCENES_CONFIG.items():
+        gt_base = config["gt_base"]
+        test_bases = config["tests"]
+        
+        # Skip if no tests defined
+        if not test_bases:
+            continue
+
+        print(f"--- Evaluating Scene: {scene_id} ---")
+        
+        # Create a dedicated directory for this scene's results
+        scene_results_dir = os.path.join(master_results_dir, scene_id)
+        os.makedirs(scene_results_dir, exist_ok=True)
+
+        scene_results = []
+        for test in test_bases:
+            if not os.path.exists(f"{test}.hdr"):
+                print(f"File not found, skipping: {test}.hdr")
+                continue
+            
+            print(f"  Processing: {os.path.basename(test)}")
+            row_data = evaluate_scene(gt_base, test, scene_results_dir)
+            scene_results.append(row_data)
+
+        # Save CSV for this specific scene
+        if scene_results:
+            df = pd.DataFrame(scene_results)
+            csv_path = os.path.join(scene_results_dir, f"{scene_id}_results.csv")
+            df.to_csv(csv_path, index=False)
+            print(f"Saved {scene_id} results to: {csv_path}\n")
+            print(df)
+            print("-" * 50)
+        
+        # Cleanup the Ground Truth temp EXR file for this scene
+        temp_gt_exr = f"{gt_base}_TEMP.exr"
+        if os.path.exists(temp_gt_exr):
+            os.remove(temp_gt_exr)
+            
+    print("Evaluation Complete!")
