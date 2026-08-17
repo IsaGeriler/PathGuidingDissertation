@@ -974,7 +974,7 @@ public:
 		// Using GGX Microfacet Model
 		float G = ShadingHelper::Gggx(wiLocal, woLocal, alpha);
 		float D = ShadingHelper::Dggx(hLocal, alpha);
-		float F = ShadingHelper::fresnelDielectric((Dot(woLocal, hLocal)), intIOR, extIOR);
+		float F = ShadingHelper::fresnelDielectric(Dot(woLocal, hLocal), intIOR, extIOR);
 
 		float denom = (4.f * wiLocal.z * woLocal.z);
 		if (denom < EPSILON) return Colour(0.f, 0.f, 0.f);
@@ -998,9 +998,9 @@ public:
 		
 		// Using GGX Microfacet Model
 		float D = ShadingHelper::Dggx(hLocal, alpha);
-		float F = ShadingHelper::fresnelDielectric((woLocal.z), intIOR, extIOR);
+		float F = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
 
-		float glossyPDF = F * ((D * (hLocal.z)) / (4.f * std::max((Dot(woLocal, hLocal)), EPSILON)));
+		float glossyPDF = F * ((D * (hLocal.z)) / (4.f * std::fabs(Dot(woLocal, hLocal))));
 		float diffusePDF = (1.f - F) * SamplingDistributions::cosineHemispherePDF(wiLocal);
 		return glossyPDF + diffusePDF;
 	}

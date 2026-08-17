@@ -1,0 +1,24 @@
+timestamp,scene,method,spp,render_time_seconds,output_file
+2026-08-17 00:50:42,cornell-box,path_trace,64,21.001,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_path_trace_64spp.hdr
+2026-08-17 00:51:26,cornell-box,path_trace,128,44.162,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_path_trace_128spp.hdr
+2026-08-17 00:52:56,cornell-box,path_trace,256,89.745,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_path_trace_256spp.hdr
+2026-08-17 00:55:47,cornell-box,path_trace,512,170.878,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_path_trace_512spp.hdr
+2026-08-17 00:57:28,cornell-box,photon_map,64,100.757,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_photon_map_64spp.hdr
+2026-08-17 01:00:39,cornell-box,photon_map,128,191.447,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_photon_map_128spp.hdr
+2026-08-17 01:07:13,cornell-box,photon_map,256,394.194,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_photon_map_256spp.hdr
+2026-08-17 01:19:58,cornell-box,photon_map,512,765.07,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_photon_map_512spp.hdr
+2026-08-17 01:39:51,cornell-box,path_guide,64,1192.781,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_path_guide_64spp.hdr
+2026-08-17 02:19:38,cornell-box,path_guide,128,2386.604,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_path_guide_128spp.hdr
+2026-08-17 03:41:44,cornell-box,path_guide,256,4925.921,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_path_guide_256spp.hdr
+2026-08-17 06:25:02,cornell-box,path_guide,512,9798.008,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\cornell-box_path_guide_512spp.hdr
+2026-08-17 06:26:10,kitchen,path_trace,64,68.641,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_path_trace_64spp.hdr
+2026-08-17 06:28:14,kitchen,path_trace,128,124.128,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_path_trace_128spp.hdr
+2026-08-17 06:32:16,kitchen,path_trace,256,241.999,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_path_trace_256spp.hdr
+2026-08-17 06:40:14,kitchen,path_trace,512,477.437,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_path_trace_512spp.hdr
+2026-08-17 06:42:53,kitchen,photon_map,64,159.277,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_photon_map_64spp.hdr
+2026-08-17 06:47:59,kitchen,photon_map,128,306.336,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_photon_map_128spp.hdr
+2026-08-17 06:58:19,kitchen,photon_map,256,619.253,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_photon_map_256spp.hdr
+2026-08-17 07:18:39,kitchen,photon_map,512,1219.903,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_photon_map_512spp.hdr
+2026-08-17 07:41:35,kitchen,path_guide,64,1376.624,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_path_guide_64spp.hdr
+2026-08-17 08:27:45,kitchen,path_guide,128,2769.429,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_path_guide_128spp.hdr
+2026-08-17 10:03:13,kitchen,path_guide,256,5728.848,C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide\kitchen_path_guide_256spp.hdr

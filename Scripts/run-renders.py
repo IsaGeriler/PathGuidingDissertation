@@ -6,27 +6,27 @@ from datetime import datetime
 
 # --- Configuration ---
 # Path to Renderer
-RENDERER_BIN = "C:\Users\u5749205\source\repos\IsaGeriler\PathGuidingDissertation\x64\Release\PathGuidingDissertation.exe"
+RENDERER_BIN = "C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/x64/Release/PathGuidingDissertation.exe"
 
 # Directory to save output HDR/PNG images
-OUTPUT_DIR = "C:\Users\u5749205\source\repos\IsaGeriler\PathGuidingDissertation\Images\PathTraceVsPathGuide"
+OUTPUT_DIR = "C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Images/PathTraceVsPathGuide"
 
 # Summary log file
 LOG_CSV = os.path.join(OUTPUT_DIR, "render_benchmark_results.csv")
 
 # Test Scenes
 SCENES = [
-    "C:\Users\u5749205\source\repos\IsaGeriler\PathGuidingDissertation\Scenes\cornell-box",
-    "C:\Users\u5749205\source\repos\IsaGeriler\PathGuidingDissertation\Scenes\kitchen",
-    "C:\Users\u5749205\source\repos\IsaGeriler\PathGuidingDissertation\Scenes\staircase"
+    #"C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Scenes/cornell-box",
+    #"C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Scenes/kitchen",
+    "C:/Users/u5749205/source/repos/IsaGeriler/PathGuidingDissertation/Scenes/staircase"
 ]
 
 # Methods to compare
 METHODS = ["path_trace", "photon_map", "path_guide"]
 
 # Sample counts for convergence testing (Equal-Sample test)
-# TO:DO - Add 1024 (and 2048 if enough time!)
-SPP_LIST = [64, 128, 256, 512]
+# TO:DO - Add 512, 1024 (and 2048 if enough time!) [Path Guide is slow as a turtle!]
+SPP_LIST = [64, 128, 256]
 # --- Configuration End ---
 
 # --- Batch Execution ---
