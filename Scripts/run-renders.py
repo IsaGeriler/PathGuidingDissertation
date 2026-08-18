@@ -24,11 +24,11 @@ LOG_CSV = os.path.join(OUTPUT_DIR, "render_benchmark_results.csv")
 
 # Test Scenes (Cleaner way to define them)
 SCENE_NAMES = [
-    "cornell-box",
+    #"cornell-box",
     "kitchen",
-    "staircase",
-    "classroom",
-    "dining-room"
+    #"staircase",
+    #"classroom",
+    #"dining-room"
 ]
 # Build the absolute paths dynamically for whatever machine this runs on
 SCENES = [os.path.join(BASE_DIR, "Scenes", name) for name in SCENE_NAMES]
@@ -38,7 +38,7 @@ METHODS = ["path_trace", "photon_map"]
 # METHODS = ["path_trace", "photon_map", "path_guide"]
 
 # Sample counts for convergence testing (Equal-Sample test)
-SPP_LIST = [64, 128, 256, 512]
+SPP_LIST = [64, 128, 256]
 # SPP_LIST = [64, 128, 256, 512, 1024, 2048]
 
 # --- Pre-run Checks ---

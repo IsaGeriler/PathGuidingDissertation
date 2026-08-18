@@ -880,7 +880,9 @@ public:
 
 				// Calculate flux
 				float cosine = std::fabs(Dot(wi, lightNormal));
-				float invPA = 1.f / (pdfDirection * pdfPosition * pmfLight * (float)numPhotons);
+				float pABsdf = pdfDirection * pdfPosition * pmfLight * (float)numPhotons;
+				if (pABsdf < EPSILON) continue;
+				float invPA = 1.f / pABsdf;
 				Colour flux = emission * cosine * invPA;
 
 				int sign = (Dot(wi, lightNormal) > 0.f) ? 1 : -1;
@@ -894,45 +896,28 @@ public:
 				Vec4 photonDir = light->sampleDirectionFromLight(sampler, pdfDirection);
 				if (pdfDirection <= 0.f) continue;
 
-				// The direction to the light for evaluation and disk orientation is the opposite
+				// The direction to the light for evaluation and orientation is the opposite
 				Vec4 dirToLight = -photonDir;
+				Vec4 wi = dirToLight.normalize();
 
 				// Get emission (Le)
-				Colour emission = light->evaluate(dirToLight);
+				Colour emission = light->evaluate(wi);
 				if (emission.Lum() < 1e-8f) continue;
 
 				// Sample position on the scene bounds - Disk Method
-				float sceneRadius = use<SceneBounds>().sceneRadius;
-				Vec4 sceneCenter = use<SceneBounds>().sceneCentre;
-
-				// Uniformly sample a 2D point on a unit disk, then scale by sceneRadius
-				float r1 = sampler->next();
-				float r2 = sampler->next();
-				float radius = sceneRadius * std::sqrt(r1);
-				float theta = 2.f * M_PI * r2;
-
-				// Create local point on the disk (z = 0)
-				Vec4 localDiskPos(radius * std::cos(theta), radius * std::sin(theta), 0.f);
-
-				// Orient the disk to face the light
-				Frame frame;
-				frame.fromVector(dirToLight);
-				Vec4 diskPos = frame.toWorld(localDiskPos);
-
-				// Place the disk outside the scene
-				Vec4 position = sceneCenter + (dirToLight * sceneRadius) + diskPos;
+				float pdfPosition = 0.f;
+				Vec4 position = light->samplePositionFromLight(sampler, pdfPosition);
+				if (pdfPosition <= 0.f) continue;
 
 				// Overall PDF is product of Direction PDF and Position on bounds PDF - Disk Area
-				float denom = (M_PI * sceneRadius * sceneRadius);
-				if (denom < EPSILON) continue;
-				float pdfPosition = 1.f / denom;
 				float pABsdf = pdfDirection * pdfPosition * pmfLight * (float)numPhotons;
+				if (pABsdf < EPSILON) continue;
 
 				// Calculate flux
 				float invPA = 1.f / pABsdf;
 				Colour flux = emission * invPA;
 				
-				Ray r(position + photonDir * EPSILON, photonDir);
+				Ray r(position + wi * EPSILON, photonDir);
 				tracePhotonPath(r, sampler, flux, 0);
 			}
 		}

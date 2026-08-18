@@ -448,7 +448,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
 	//std::string sceneName = "../Scenes/coffee";
-	std::string sceneName = "../Scenes/cornell-box";
+	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
 	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
@@ -459,7 +459,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/veach-mis";
 	
 	// -- Environment Map Test Scenes --
-	//std::string sceneName = "../Scenes/classroom";
+	std::string sceneName = "../Scenes/classroom";
 	//std::string sceneName = "../Scenes/car2";
 	//std::string sceneName = "../Scenes/dining-room";
 	//std::string sceneName = "../Scenes/house";
@@ -473,11 +473,11 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/teapot-full";
 
 	//unsigned int SPP = 8192;
-	unsigned int SPP = 128;
+	unsigned int SPP = 256;
 	std::string filename = "GI.hdr";
 	//std::string method = "path_trace";
-	//std::string method = "photon_map";
-	std::string method = "path_guide";
+	std::string method = "photon_map";
+	//std::string method = "path_guide";
 	double timeLimitSeconds = -1.0;  // Seconds!
 
 	if (argc > 1) {
