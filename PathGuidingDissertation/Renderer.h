@@ -5,12 +5,14 @@
 #include <cassert>
 #include <cmath>
 #include <chrono>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <iterator>
 #include <queue>
 #include <ratio>
 #include <random>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -42,8 +44,8 @@ static const int MAX_DEPTH = 8;
 
 // Number of Photons to shoot
 static const int NUM_OF_PHOTONS_TO_SHOOT = 500000;
-static const int N_PHOTONS_GLOBAL = 100;
-static const int N_PHOTONS_CAUSTIC = 40;
+static const int N_PHOTONS_GLOBAL = 150;
+static const int N_PHOTONS_CAUSTIC = 10;
 
 // Max Child Nodes That PointBVH Can Have
 static const int MAX_CHILDNODE_RECORDS = 16;
@@ -408,7 +410,7 @@ private:
 	}
 public:
 	// Public Methods
-	void build(std::vector<PathVertex>&& inputPathVertices) {
+	void build(std::vector<PathVertex>&& inputPathVertices, std::string sceneName) {
 		// Handle degenerate case where the passed vector is empty
 		if (inputPathVertices.empty()) return;
 		pathVertices = std::move(inputPathVertices);
@@ -438,7 +440,7 @@ public:
 		buildTime = std::chrono::duration<double, std::milli>(end - start).count();
 		#if DEBUG_BVH
 		validate(rootIdx);
-		stats(rootIdx);
+		stats(rootIdx, sceneName);
 		#endif
 	}
 
@@ -448,19 +450,65 @@ public:
 		assert(counted == (int)(pathVertices.size()) && "Records lost or duplicated during the build phase.");
 	}
 
-	PointBVHNodeStats stats(int nodeIdx) {
+	PointBVHNodeStats stats(int nodeIdx, std::string sceneName) {
 		PointBVHNodeStats bvhStats;
 		bvhStats.memoryInBytes = pathVertices.size() * sizeof(PathVertex);
 		statsNode(nodeIdx, bvhStats, 0);
 		bvhStats.buildTimeMs = buildTime;
-		std::cout << "PointBVHNode["
+
+		// Calculate safely to prevent divide-by-zero errors
+		double meanDepth = (bvhStats.leafNodeCount > 0) ? (double)bvhStats.sumLeafDepth / (double)bvhStats.leafNodeCount: 0.0;
+		double sizeMB = bvhStats.memoryInBytes / SQ(1024.0);
+
+		// 1. Build the output string
+		std::ostringstream report;
+		report << "PointBVHNode["
 			<< "\n  -- path vertex records: " << pathVertices.size()
 			<< "\n  -- nodes: " << bvhStats.nodeCount
 			<< "\n  -- leaf nodes: " << bvhStats.leafNodeCount
 			<< "\n  -- depth: " << bvhStats.minLeafDepth << "-" << bvhStats.maxLeafDepth
-			<< " (mean " << (double)bvhStats.sumLeafDepth / (double)bvhStats.leafNodeCount << ")"
-			<< "\n  -- size: " << bvhStats.memoryInBytes / SQ(1024.0) << " MB"
+			<< " (mean " << meanDepth << ")"
+			<< "\n  -- size: " << sizeMB << " MB"
 			<< "\n  -- build time: " << bvhStats.buildTimeMs << " ms\n]\n";
+
+		// 2. Print to terminal
+		std::cout << report.str();
+
+		// 3. Save to a Text File (Append Mode)
+		std::string filename = sceneName + "bvh_build_log.txt";
+		std::ofstream logFile(filename, std::ios::app);
+		if (logFile.is_open()) {
+			logFile << report.str();
+			logFile.close();
+		} else {
+			std::cerr << "Warning: Could not open bvh_build_log.txt for writing.\n";
+		}
+
+		// ---------------------------------------------------------
+		// Save to CSV
+		std::string csvFilename = sceneName + "bvh_build_data.csv";
+		std::ofstream csvFile(csvFilename, std::ios::app);
+		if (csvFile.is_open()) {
+			// If file is empty, write a header row
+			csvFile.seekp(0, std::ios::end);
+			if (csvFile.tellp() == 0) {
+				csvFile << "Node Index,Vertex Records,Total Nodes,Leaf Nodes,Min Depth,Max Depth,Mean Depth,Size (MB),Build Time (ms)\n";
+			}
+
+			csvFile << nodeIdx << ","
+				<< pathVertices.size() << ","
+				<< bvhStats.nodeCount << ","
+				<< bvhStats.leafNodeCount << ","
+				<< bvhStats.minLeafDepth << ","
+				<< bvhStats.maxLeafDepth << ","
+				<< meanDepth << ","
+				<< sizeMB << ","
+				<< bvhStats.buildTimeMs << "\n";
+
+			csvFile.close();
+		}
+		// ---------------------------------------------------------
+
 		return bvhStats;
 	}
 
@@ -527,7 +575,7 @@ private:
 		int midIdx = startIdx + (endIdx - startIdx) / 2;
 		const Photon& photon = photons[midIdx];
 
-		if (Dot(photon.normal, targetNormal) >= 0.f) {
+		if (Dot(photon.normal, targetNormal) >= 0.9f) {
 			// Calculate distance between the photon and targetPosition
 			float distanceSq = (targetPosition - photon.position).lengthSquare();
 			if (distanceSq < maxDistanceSq) {
@@ -631,6 +679,7 @@ public:
 	std::thread** threads;
 	unsigned int numProcs;
 	std::string renderMethod = "path_trace";
+	std::string sceneName;
 
 	// Cached vertices will be stored in a BVH structure
 	PointBVH* cacheBVH;
@@ -829,7 +878,7 @@ public:
 				// Sample light normal
 				Vec4 lightNormal = light->normal(ShadingData(position, wi), wi);
 
-				// Calculate beta
+				// Calculate flux
 				float cosine = std::fabs(Dot(wi, lightNormal));
 				float invPA = 1.f / (pdfDirection * pdfPosition * pmfLight * (float)numPhotons);
 				Colour flux = emission * cosine * invPA;
@@ -838,7 +887,54 @@ public:
 				Ray r(position + lightNormal * sign * EPSILON, wi);
 				tracePhotonPath(r, sampler, flux, 0);
 			}
-			// TO:DO - Sampled Light is an Environment Map
+			// Sampled Light is an Environment Map
+			else {
+				// Sample direction
+				float pdfDirection = 0.f;
+				Vec4 photonDir = light->sampleDirectionFromLight(sampler, pdfDirection);
+				if (pdfDirection <= 0.f) continue;
+
+				// The direction to the light for evaluation and disk orientation is the opposite
+				Vec4 dirToLight = -photonDir;
+
+				// Get emission (Le)
+				Colour emission = light->evaluate(dirToLight);
+				if (emission.Lum() < 1e-8f) continue;
+
+				// Sample position on the scene bounds - Disk Method
+				float sceneRadius = use<SceneBounds>().sceneRadius;
+				Vec4 sceneCenter = use<SceneBounds>().sceneCentre;
+
+				// Uniformly sample a 2D point on a unit disk, then scale by sceneRadius
+				float r1 = sampler->next();
+				float r2 = sampler->next();
+				float radius = sceneRadius * std::sqrt(r1);
+				float theta = 2.f * M_PI * r2;
+
+				// Create local point on the disk (z = 0)
+				Vec4 localDiskPos(radius * std::cos(theta), radius * std::sin(theta), 0.f);
+
+				// Orient the disk to face the light
+				Frame frame;
+				frame.fromVector(dirToLight);
+				Vec4 diskPos = frame.toWorld(localDiskPos);
+
+				// Place the disk outside the scene
+				Vec4 position = sceneCenter + (dirToLight * sceneRadius) + diskPos;
+
+				// Overall PDF is product of Direction PDF and Position on bounds PDF - Disk Area
+				float denom = (M_PI * sceneRadius * sceneRadius);
+				if (denom < EPSILON) continue;
+				float pdfPosition = 1.f / denom;
+				float pABsdf = pdfDirection * pdfPosition * pmfLight * (float)numPhotons;
+
+				// Calculate flux
+				float invPA = 1.f / pABsdf;
+				Colour flux = emission * invPA;
+				
+				Ray r(position + photonDir * EPSILON, photonDir);
+				tracePhotonPath(r, sampler, flux, 0);
+			}
 		}
 		// Build Global and Caustic Photon Maps
 		globalPhotonMap.build();
@@ -944,7 +1040,7 @@ public:
 				Colour incoming = traceCameraRay(nextRay, sampler, depth + 1, isFinalGatherRay, true, pdfBsdf);
 				
 				float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
-				return incoming * fBsdf * (cosTheta / pdfBsdf);
+				return (incoming * fBsdf * cosTheta) / pdfBsdf;
 			}
 
 			// Diffuse Surfaces - Compute Direct Lighting
@@ -952,7 +1048,7 @@ public:
 
 			// Radius for Caustics & Compute Indirect Lighting for Caustic Photon Map
 			float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
-			float causticRadius = sceneDiagonal * 0.002f;
+			float causticRadius = sceneDiagonal * 0.01f;
 			Colour indirectCaustic = causticPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, N_PHOTONS_CAUSTIC, causticRadius);
 
 			// Compute Indirect Lighting for Global Photon Map
@@ -966,21 +1062,16 @@ public:
 					int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
 					Ray finalGatherRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
 					Colour incomingRadiance = traceCameraRay(finalGatherRay, sampler, depth + 1, true, false, pdfBsdf);
-					indirectGlobal = incomingRadiance * fBsdf * (cosTheta / pdfBsdf);
+					indirectGlobal = (incomingRadiance * fBsdf * cosTheta) / pdfBsdf;
 				}
 			} else {
 				// Extra bounce is over, we can estimate the density radiance now at secondary hit point/s!
-				float globalRadius = sceneDiagonal * 0.008f;
+				float globalRadius = sceneDiagonal * 0.05f;
 				indirectGlobal = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, N_PHOTONS_GLOBAL, globalRadius);
 			}
 			// Combine results - Ld + Lg + Lc
 			Colour finalRadiance = direct + indirectGlobal + indirectCaustic;
 			if (!finalRadiance.isValid()) return Colour(0.f, 0.f, 0.f);
-
-			// Clamping to eliminate firefly artifacts
-			float maxLuminance = 20.f;
-			float lum = finalRadiance.Lum();
-			if (lum > maxLuminance) finalRadiance = finalRadiance * (maxLuminance / lum);
 			return finalRadiance;
 		}
 		// Evaluate MIS for Environment Map
@@ -1474,8 +1565,14 @@ public:
 			}
 		}
 		// 8. Save the Image
-		stbi_write_png("pss_qtree_debug_map.png", SIZE, SIZE, 3, buffer.data(), SIZE * 3);
-		stbi_write_png("pss_defensive_debug_map.png", SIZE, SIZE, 3, bufferDefensive.data(), SIZE * 3);
+		std::string buf(sceneName);
+		buf.append("pss_qtree_debug_map.png");
+
+		std::string bufDefensive(sceneName);
+		bufDefensive.append("pss_defensive_debug_map.png");
+
+		stbi_write_png(buf.c_str(), SIZE, SIZE, 3, buffer.data(), SIZE * 3);
+		stbi_write_png(bufDefensive.c_str(), SIZE, SIZE, 3, bufferDefensive.data(), SIZE * 3);
 		std::cout << "[DEBUG] Saved Maps! Total plotted points: " << plottedPoints.size() << std::endl;
 	}
 	// --- PSS Debug End ---
@@ -1607,7 +1704,7 @@ public:
 
 				if (cacheBVH) delete cacheBVH;
 				cacheBVH = new PointBVH();
-				cacheBVH->build(std::move(globalCacheList));
+				cacheBVH->build(std::move(globalCacheList), sceneName);
 
 				// Clear Global Cache Estimates List
 				globalCacheList.clear();
@@ -1720,26 +1817,71 @@ public:
 				double avgQTreeTime = totalQTreeTime / numProcs;
 				double avgBSDFInvertTime = totalBSDFInvertTime / numProcs;
 
-				// Print the profiling report
-				std::cout << "\n=========================================\n";
-				std::cout << "      PATH GUIDING PROFILING REPORT      \n";
-				std::cout << "=========================================\n";
-				std::cout << "Total Guided Path Bounces : " << totalGuidedPathBounces << std::endl;
-				std::cout << "Average BVH Search Time   : " << avgBVHTime << " ms / frame" << std::endl;
-				std::cout << "Average QTree Build Time  : " << avgQTreeTime << " ms / frame" << std::endl;
-				std::cout << "Average BSDF Invert Time  : " << avgBSDFInvertTime << " ms / frame" << std::endl;
+				// 1. Build the output string using a stringstream
+				std::ostringstream report;
+				report << "\n=========================================\n"
+					<< "      PATH GUIDING PROFILING REPORT      \n"
+					<< "=========================================\n"
+					<< "Total Guided Path Bounces : " << totalGuidedPathBounces << "\n"
+					<< "Average BVH Search Time   : " << avgBVHTime << " ms / frame\n"
+					<< "Average QTree Build Time  : " << avgQTreeTime << " ms / frame\n"
+					<< "Average BSDF Invert Time  : " << avgBSDFInvertTime << " ms / frame\n";
 
 				if (totalGuidedPathBounces > 0) {
 					double bvhSearchPerBounce = (totalBVHTime * 1000.0) / totalGuidedPathBounces;
 					double qTreeBuildPerBounce = (totalQTreeTime * 1000.0) / totalGuidedPathBounces;
 					double bsdfInvertPerBounce = (totalBSDFInvertTime * 1000.0) / totalGuidedPathBounces;
-					std::cout << "-----------------------------------------\n";
-					std::cout << "Time Per Bounce Stats:\n";
-					std::cout << "  BVH Search  : " << bvhSearchPerBounce << " microseconds" << std::endl;
-					std::cout << "  QTree Build : " << qTreeBuildPerBounce << " microseconds" << std::endl;
-					std::cout << "  BSDF Invert : " << bsdfInvertPerBounce << " microseconds" << std::endl;
+					report << "-----------------------------------------\n"
+						<< "Time Per Bounce Stats:\n"
+						<< "  BVH Search  : " << bvhSearchPerBounce << " microseconds\n"
+						<< "  QTree Build : " << qTreeBuildPerBounce << " microseconds\n"
+						<< "  BSDF Invert : " << bsdfInvertPerBounce << " microseconds\n";
 				}
-				std::cout << "=========================================\n\n";
+				report << "=========================================\n\n";
+
+				// 2. Print to terminal
+				std::cout << report.str();
+
+				// 3. Save to file (Append mode)
+				std::string filename(sceneName);
+				filename.append(std::to_string(maxSPP));
+				filename.append("profiling_log.txt");
+				std::ofstream logFile(filename, std::ios::app);
+				if (logFile.is_open()) {
+					logFile << report.str();
+					logFile.close();
+				} else {
+					std::cerr << "Warning: Could not open " << filename << " for writing.\n";
+				}
+
+				// --- Save to CSV ---
+				std::string csvFilename(sceneName);
+				csvFilename.append(std::to_string(maxSPP));
+				csvFilename.append("profiling_data.csv");
+				std::ofstream csvFile(csvFilename, std::ios::app);
+				if (csvFile.is_open()) {
+					// If the file is empty, write a header row first
+					csvFile.seekp(0, std::ios::end);
+					if (csvFile.tellp() == 0) {
+						csvFile << "Total Bounces,Avg BVH Time (ms),Avg QTree Time (ms),Avg BSDF Invert Time (ms),BVH Per Bounce (us),QTree Per Bounce (us),BSDF Invert Per Bounce (us)\n";
+					}
+
+					// Calculate per bounce stats (default to 0 if no bounces)
+					double bvhSearchPerBounce = (totalGuidedPathBounces > 0) ? (totalBVHTime * 1000.0) / totalGuidedPathBounces : 0.0;
+					double qTreeBuildPerBounce = (totalGuidedPathBounces > 0) ? (totalQTreeTime * 1000.0) / totalGuidedPathBounces : 0.0;
+					double bsdfInvertPerBounce = (totalGuidedPathBounces > 0) ? (totalBSDFInvertTime * 1000.0) / totalGuidedPathBounces : 0.0;
+
+					// Write the comma-separated data
+					csvFile << totalGuidedPathBounces << ","
+						<< avgBVHTime << ","
+						<< avgQTreeTime << ","
+						<< avgBSDFInvertTime << ","
+						<< bvhSearchPerBounce << ","
+						<< qTreeBuildPerBounce << ","
+						<< bsdfInvertPerBounce << "\n";
+
+					csvFile.close();
+				}
 
 				// Reset the records
 				for (int i = 0; i < numProcs; i++) {

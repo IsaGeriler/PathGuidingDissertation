@@ -447,8 +447,8 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/bathroom";
 	//std::string sceneName = "../Scenes/bathroom2";
 	//std::string sceneName = "../Scenes/bedroom";
-	std::string sceneName = "../Scenes/coffee";
-	//std::string sceneName = "../Scenes/cornell-box";
+	//std::string sceneName = "../Scenes/coffee";
+	std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
 	//std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
@@ -476,8 +476,8 @@ int main(int argc, char* argv[]) {
 	unsigned int SPP = 128;
 	std::string filename = "GI.hdr";
 	//std::string method = "path_trace";
-	std::string method = "photon_map";
-	//std::string method = "path_guide";
+	//std::string method = "photon_map";
+	std::string method = "path_guide";
 	double timeLimitSeconds = -1.0;  // Seconds!
 
 	if (argc > 1) {
@@ -521,6 +521,7 @@ int main(int argc, char* argv[]) {
 	canvas.create((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, "Tracer", false);
 	RayTracer rt;
 	rt.init(scene, &canvas, method, SPP);
+	rt.sceneName = sceneName;
 	bool running = true;
 	GamesEngineeringBase::Timer timer;
 
