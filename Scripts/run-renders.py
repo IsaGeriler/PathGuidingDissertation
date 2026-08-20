@@ -24,32 +24,32 @@ LOG_CSV = os.path.join(OUTPUT_DIR, "render_benchmark_results.csv")
 
 # Test Scenes (Cleaner way to define them)
 SCENE_NAMES = [
-    #"cornell-box",
+    "cornell-box",
     "kitchen",
-    #"staircase",
-    #"classroom",
-    #"dining-room"
+    "staircase",
+    "classroom",
+    "dining-room"
 ]
 # Build the absolute paths dynamically for whatever machine this runs on
 SCENES = [os.path.join(BASE_DIR, "Scenes", name) for name in SCENE_NAMES]
 
 # Methods to compare
-METHODS = ["path_trace", "photon_map"]
-# METHODS = ["path_trace", "photon_map", "path_guide"]
+METHODS = ["path_guide_pss"]
+# METHODS = ["path_trace", "photon_map", "path_guide_pss", "path_guide_photon"]
 
 # Sample counts for convergence testing (Equal-Sample test)
-SPP_LIST = [64, 128, 256]
+SPP_LIST = [32, 128, 512]
 # SPP_LIST = [64, 128, 256, 512, 1024, 2048]
 
 # --- Pre-run Checks ---
 if not os.path.exists(RENDERER_BIN):
-    print(f"❌ ERROR: Renderer executable not found at:\n{RENDERER_BIN}")
+    print(f"[ERROR]: Renderer executable not found at:\n{RENDERER_BIN}")
     print("Did you forget to build the project in Visual Studio (Release mode)?")
     sys.exit(1)
 
 for scene in SCENES:
     if not os.path.exists(scene):
-        print(f"⚠️ WARNING: Scene folder not found: {scene}")
+        print(f"[WARNING]: Scene folder not found: {scene}")
 
 # --- Batch Execution ---
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -110,7 +110,7 @@ with open(LOG_CSV, mode="a", newline="") as csv_file:
                     csv_file.flush()
 
                 except subprocess.CalledProcessError as e:
-                    print(f"❌ ERROR: Render failed for {scene_name} ({method}, {spp} spp)!")
+                    print(f"[ERROR]: Render failed for {scene_name} ({method}, {spp} spp)!")
                     print(f"Error output:\n{e.stderr}")
                     continue
 
