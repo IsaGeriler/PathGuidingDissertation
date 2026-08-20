@@ -306,6 +306,8 @@ public:
 		Vec4 wmLocal = SphericalCoordinates::sphericalToWorld(thetaM, phiM);
 		Vec4 wiLocal = -woLocal + wmLocal * 2.f * Dot(wmLocal, woLocal);
 
+		if (wiLocal.z <= 0.f || Dot(wmLocal, woLocal) <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+
 		Vec4 wi = shadingData.frame.toWorld(wiLocal);
 		reflectedColour = evaluate(shadingData, wi);
 		pdf = PDF(shadingData, wi);
@@ -917,7 +919,7 @@ public:
 			// Flip if it's below the surface
 			if (woLocal.z <= 0.f) hLocal = -hLocal;
 			wiLocal = hLocal * 2.f * Dot(woLocal, hLocal) - woLocal;
-			if (wiLocal.z * woLocal.z <= 0.f || Dot(woLocal, hLocal) <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
+			if (wiLocal.z <= 0.f || Dot(woLocal, hLocal) <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 			if (sampledGlossy != nullptr) *sampledGlossy = alpha < 0.12f;
 		} else {
 			// Diffuse Part - Sample wi with cosine hemisphere

@@ -1,8 +1,0 @@
-PointBVHNode[
-  -- path vertex records: 1004280
-  -- nodes: 131071
-  -- leaf nodes: 65536
-  -- depth: 16-16 (mean 16)
-  -- size: 62.4653 MB
-  -- build time: 434.192 ms
-]
