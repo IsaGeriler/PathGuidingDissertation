@@ -59,7 +59,7 @@ static void runInversionTestLoop(BSDF* testBSDF, const std::string& testName) {
 
 		// Invert BSDF
 		float u_out = 0.f, v_out = 0.f, sampleProbability = 0.f;
-		testShadingData.bsdf->invert(testShadingData, wi, u_out, v_out, sampleProbability);
+		testShadingData.bsdf->invert(testShadingData, &sampler, wi, u_out, v_out, sampleProbability);
 		testSampler.set(u_out, v_out, sampleProbability);
 
 		float pdfReconstructed = 0.f;
@@ -437,7 +437,7 @@ static void runTest() {
 
 int main(int argc, char* argv[]) {
 	// Run testing code first before rendering any stuff!
-	// runTest();
+	runTest();
 
 	// Note - Test on these scenes
 	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase +
@@ -450,7 +450,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/coffee";
 	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
-	//std::string sceneName = "../Scenes/kitchen";
+	std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
 	//std::string sceneName = "../Scenes/staircase";
@@ -459,7 +459,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/veach-mis";
 	
 	// -- Environment Map Test Scenes --
-	std::string sceneName = "../Scenes/classroom";
+	//std::string sceneName = "../Scenes/classroom";
 	//std::string sceneName = "../Scenes/car2";
 	//std::string sceneName = "../Scenes/dining-room";
 	//std::string sceneName = "../Scenes/house";
@@ -472,12 +472,15 @@ int main(int argc, char* argv[]) {
 	// -- I don't know why it does not work Scene
 	//std::string sceneName = "../Scenes/teapot-full";
 
+	// Ground Truth: 8192/16384					(should really be an absurd number to eliminate variance)
+	// Testing SPPs: 128/256/512/1024/2048/4096 (render, and compare error metrics with the groung truth)
 	//unsigned int SPP = 8192;
-	unsigned int SPP = 256;
+	unsigned int SPP = 128;
 	std::string filename = "GI.hdr";
 	//std::string method = "path_trace";
-	std::string method = "photon_map";
-	//std::string method = "path_guide";
+	//std::string method = "photon_map";
+	//std::string method = "path_guide_photon";
+	std::string method = "path_guide_pss";
 	double timeLimitSeconds = -1.0;  // Seconds!
 
 	if (argc > 1) {

@@ -114,7 +114,7 @@ public:
 		Vec4 p = SamplingDistributions::uniformSampleSphere(sampler->next(), sampler->next());
 		p = p * use<SceneBounds>().sceneRadius;
 		p = p + use<SceneBounds>().sceneCentre;
-		pdf = 4 * M_PI * use<SceneBounds>().sceneRadius * use<SceneBounds>().sceneRadius;
+		pdf = 1.f / (4 * M_PI * use<SceneBounds>().sceneRadius * use<SceneBounds>().sceneRadius);
 		return p;
 	}
 

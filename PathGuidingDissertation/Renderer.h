@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cmath>
@@ -9,9 +10,9 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
-#include <queue>
+//#include <queue>
 #include <ratio>
-#include <random>
+//#include <random>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -23,13 +24,13 @@
 #include "Materials.h"
 #include "MyMath.h"
 #include "QTree.h"
+#include "FixedQuadTree.h"
 #include "Sampling.h"
 #include "Scene.h"
 
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define SEARCH_KNN true
 #define DEBUG_GUIDED_PATH false
 #define DEBUG_BVH true
 
@@ -44,13 +45,14 @@ static const int MAX_DEPTH = 8;
 
 // Number of Photons to shoot
 static const int NUM_OF_PHOTONS_TO_SHOOT = 500000;
-static const int N_PHOTONS_GLOBAL = 150;
-static const int N_PHOTONS_CAUSTIC = 10;
+static const int N_PHOTONS_GLOBAL = 100;
+static const int N_PHOTONS_CAUSTIC = 40;
 
 // Max Child Nodes That PointBVH Can Have
 static const int MAX_CHILDNODE_RECORDS = 16;
 
 // Defensive Sampling & Mixture
+static const int MAX_GUIDING_DEPTH = 2;
 static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
 static const int MIN_ACCEPTED_INSERTIONS = 32;  // Aim between 16-64
 static const float BSDF_FRACTION = 0.5f;
@@ -136,14 +138,14 @@ struct HeapKNNQueue {
 			vertices[count++] = { distSq, vertex };
 			std::push_heap(vertices, vertices + count);
 			// We inserted last available slot here, adjust radius and make heap
-			if (count == MAX_K) dynamicRadiusSq = vertices[0].distanceSq;
+			if (count == MAX_K) dynamicRadiusSq = std::min(dynamicRadiusSq, vertices[0].distanceSq);
 		}
 		// Queue is full but we found a closer point
 		else if (distSq < vertices[0].distanceSq) {
 			std::pop_heap(vertices, vertices + MAX_K);
 			vertices[MAX_K - 1] = { distSq, vertex };
 			std::push_heap(vertices, vertices + MAX_K);
-			dynamicRadiusSq = vertices[0].distanceSq;
+			dynamicRadiusSq = dynamicRadiusSq = std::min(dynamicRadiusSq, vertices[0].distanceSq);
 		}
 	}
 };
@@ -360,7 +362,7 @@ private:
 				// float distanceSq = (SQ(vertex.position.x - hitPosition.x) + SQ(vertex.position.y - hitPosition.y) + SQ(vertex.position.z - hitPosition.z));
 				float distanceSq = (vertex.position - hitPosition).lengthSquare();
 				// if (distanceSq < dynamicRadiusSq || maxHeap.size() < k) {
-				if (distanceSq < dynamicRadiusSq || maxHeap.size() < MAX_K) {
+				if (distanceSq < dynamicRadiusSq) {
 					// Push the new nearest vertex in the heap
 					// NearestPathVertex nearestVertex{ distanceSq, &vertex };
 					// maxHeap.push(nearestVertex);
@@ -416,8 +418,8 @@ public:
 		pathVertices = std::move(inputPathVertices);
 
 		nodes.clear();
-		size_t maxLeaves = (pathVertices.size() + MAX_CHILDNODE_RECORDS - 1) / MAX_CHILDNODE_RECORDS;
-		size_t maxNodes = 2 * maxLeaves - 1;
+		size_t safeMaxLeaves = pathVertices.size() / (MAX_CHILDNODE_RECORDS / 2) + 2;
+		size_t maxNodes = 2 * safeMaxLeaves - 1;
 		nodes.reserve(maxNodes);
 
 		// Initialize root
@@ -567,7 +569,7 @@ private:
 		buildRecursive(midIdx + 1, endIdx, depth + 1);
 	}
 
-	void searchKNN(int startIdx, int endIdx, int maxPhotons, const Vec4& targetPosition, const Vec4& targetNormal, float& maxDistanceSq, std::priority_queue<NearestPhoton>& nearestPhotons) {
+	void searchKNN(int startIdx, int endIdx, int maxPhotons, const Vec4& targetPosition, const Vec4& targetNormal, float& maxDistanceSq, std::vector<NearestPhoton>& nearestPhotons) {
 		// If start index is bigger or equal than end index, no point in this
 		if (startIdx >= endIdx) return;
 
@@ -575,18 +577,21 @@ private:
 		int midIdx = startIdx + (endIdx - startIdx) / 2;
 		const Photon& photon = photons[midIdx];
 
-		if (Dot(photon.normal, targetNormal) >= 0.9f) {
+		if (Dot(photon.normal, targetNormal) >= 0.7f) {
 			// Calculate distance between the photon and targetPosition
 			float distanceSq = (targetPosition - photon.position).lengthSquare();
 			if (distanceSq < maxDistanceSq) {
 				// Push in the max heap
-				nearestPhotons.push({ distanceSq, midIdx });
-				int heapSize = (int)(nearestPhotons.size());
+				nearestPhotons.push_back({ distanceSq, midIdx });
+				
+				// Re-sort the vector into a max-heap
+				std::push_heap(nearestPhotons.begin(), nearestPhotons.end());
 
 				// If max-heap size is bigger than the limit, pop and adjust the max distance
-				if (heapSize > maxPhotons) {
-					nearestPhotons.pop();
-					maxDistanceSq = nearestPhotons.top().distanceSq;
+				if (nearestPhotons.size() > maxPhotons) {
+					std::pop_heap(nearestPhotons.begin(), nearestPhotons.end());
+					nearestPhotons.pop_back();
+					maxDistanceSq = nearestPhotons.front().distanceSq;
 				}
 			}
 		}
@@ -626,12 +631,12 @@ public:
 	void insertPhoton(Photon& photon) { photons.push_back(photon); }
 	void clearMap() { photons.clear(); }
 
-	Colour estimateRadiance(ShadingData& shadingData, const Vec4& position, const Vec4& normal, int maxPhotons = 100, float maxSearchRadius = 1.f) {
+	Colour estimateRadiance(ShadingData& shadingData, const Vec4& position, const Vec4& normal, std::vector<NearestPhoton>& heapWorkspace, int maxPhotons = 100, float maxSearchRadius = 1.f) {
 		// We cannot estimate radiance if we don't have Photons
 		if (photons.empty()) return Colour(0.f, 0.f, 0.f);
 
 		// Define the variables we'll pass to the kNN-Search
-		std::priority_queue<NearestPhoton> nearestPhotons;
+		std::vector<NearestPhoton> nearestPhotons;
 		float maxDistanceSq = maxSearchRadius * maxSearchRadius;
 
 		// Do kNN-Search
@@ -643,32 +648,154 @@ public:
 		if (radiusSq < EPSILON) return Colour(0.f, 0.f, 0.f);
 
 		// Accumulate Radiance
-		float maxRadius = std::sqrt(radiusSq);
 		Colour accumulatedRadiance(0.f, 0.f, 0.f);
 
-		while (!nearestPhotons.empty()) {
-			// Pop the top Photon
-			int photonIdx = nearestPhotons.top().key;
-			float distSq = nearestPhotons.top().distanceSq;
+		for (const NearestPhoton& np : heapWorkspace) {
+			int photonIdx = np.key;
+			float distSq = np.distanceSq;
 			const Photon& photon = photons[photonIdx];
-			nearestPhotons.pop();
 
-			// Cone Filter [Jensen 1996]
-			// I'll assume filter constant, k, is 1
-			float distance = std::sqrt(distSq);
-			float weight = std::max(0.f, 1.f - (distance / maxRadius));
-			
+			// Epanechnikov Filter
+			float weight = std::max(0.f, 1.f - (distSq / radiusSq));
+
 			// Density Estimation
 			Colour fr = shadingData.bsdf->evaluate(shadingData, photon.wi);
 			accumulatedRadiance = accumulatedRadiance + fr * photon.flux * weight;
 		}
+
 		// Divide by area and return Accumulated Radiance
-		// Cone Filter Normalization Factor = 1/3
-		float invArea = 3.f / (M_PI * radiusSq);
+		// Epanechnikov Filter Normalization Factor = 2 / (M_PI * r * r)
+		float invArea = 2.f / (M_PI * radiusSq);
 		return accumulatedRadiance * invArea;
+	}
+
+	void gather(const Vec4& position, const Vec4& normal, std::vector<Photon>& outPhotons, std::vector<NearestPhoton>& heapWorkspace, int maxPhotons = 100, float maxSearchRadius = 1.f) {
+		outPhotons.clear();
+		heapWorkspace.clear();
+
+		// If we don't have any photons, return an empty list
+		if (photons.empty()) return;
+
+		// Define the variables we'll pass to the kNN-Search
+		float maxDistanceSq = maxSearchRadius * maxSearchRadius;
+
+		// Do kNN-Search
+		int startIdx = 0, endIdx = (int)(photons.size());
+		searchKNN(startIdx, endIdx, maxPhotons, position, normal, maxDistanceSq, heapWorkspace);
+
+		// Transfer photons from the heap to the list
+		for (const NearestPhoton& np : heapWorkspace) {
+			outPhotons.push_back(photons[np.key]);
+		}
 	}
 };
 // --- KD-Tree for Photon Mapping [Jensen 1995, 1996] End ---
+
+// --- Directional Grid Start ---
+template <int RESOLUTION = 32>
+class DirectionalGrid {
+private:
+	// Attributes
+	static constexpr int NUMBER_OF_CELLS = RESOLUTION * RESOLUTION;
+	//std::vector<float> probabilities;
+	//std::vector<float> cdfs;
+	std::array<float, NUMBER_OF_CELLS> probabilities;
+	std::array<float, NUMBER_OF_CELLS> cdfs;
+
+	// Helper Functions
+	int directionToIndex(const Vec4& wiLocal) const {
+		float u = (std::atan2(wiLocal.y, wiLocal.x) + M_PI) / (2.f * M_PI);
+		float v = (wiLocal.z + 1.f) * 0.5f;
+		int cx = std::min(std::max(0, (int)(u * RESOLUTION)), RESOLUTION - 1);
+		int cy = std::min(std::max(0, (int)(v * RESOLUTION)), RESOLUTION - 1);
+		return cy * RESOLUTION + cx;
+	}
+
+	int binarySearch(float u) {
+		auto it = std::upper_bound(cdfs.begin(), cdfs.end(), u);
+		int index = std::distance(cdfs.begin(), it);
+		return std::min(index, NUMBER_OF_CELLS - 1);
+	}
+
+public:
+	// Constructor
+	// Build the grid and cache the CDFs (Cumulative Distribution Function)
+	DirectionalGrid() = default;
+
+	void build (const std::vector<Photon>& photons, const ShadingData& shadingData) {
+		// Initialize the vector attributes
+		probabilities.fill(0.f);
+		cdfs.fill(0.f);
+
+		// Total flux
+		float totalFlux = 0.f;
+
+		// Populate the grid with photon flux
+		for (const Photon& photon : photons) {
+			Vec4 wiLocal = shadingData.frame.toLocal(photon.wi);
+			int index = directionToIndex(wiLocal);
+
+			float flux = photon.flux.Lum();
+			probabilities[index] += flux;
+			totalFlux += flux;
+		}
+
+		// Normalise probabilities and build the CDFs
+		if (totalFlux > EPSILON) {
+			float sum = 0.f;
+			for (int i = 0; i < NUMBER_OF_CELLS; i++) {
+				// Normalize the probability in 0-1 range
+				probabilities[i] /= totalFlux;
+				sum += probabilities[i];
+				cdfs[i] = sum;
+			}
+			cdfs.back() = 1.f;
+		} else {
+			// Fallback to uniform distribution
+			float uniformProbability = 1.f / (float)NUMBER_OF_CELLS;
+			for (int i = 0; i < NUMBER_OF_CELLS; i++) {
+				probabilities[i] = uniformProbability;
+				cdfs[i] = (float)(i + 1) / (float)NUMBER_OF_CELLS;
+			}
+		}
+	}
+
+	// Sample: Pick a direction based on grid probabilities
+	Vec4 sample(Sampler* sampler, float& outPdf) {
+		// Generate uniform random number for the CDF
+		float r = sampler->next();
+
+		// Get the CDF via binary search
+		int index = binarySearch(r);
+
+		// Convert 1D index to 2D grid co-ordinates
+		int cx = index % RESOLUTION;
+		int cy = index / RESOLUTION;
+
+		float ru = sampler->next();
+		float rv = sampler->next();
+		float u = (cx + ru) / (float)RESOLUTION;
+		float v = (cy + rv) / (float)RESOLUTION;
+
+		// Convert [0,1] (u,v) back to 3D vector
+		float phi = u * 2.f * M_PI - M_PI;
+		float z = v * 2.f - 1.f;
+		float radius = std::sqrt(std::max(0.f, 1.f - z * z));
+
+		Vec4 wiLocal(radius * std::cos(phi), radius * std::sin(phi), z);
+		outPdf = pdf(wiLocal);
+		return wiLocal;
+	}
+
+	// PDF: Return solid angle pdf for a direction
+	float pdf(const Vec4& wiLocal) const {
+		int index = directionToIndex(wiLocal);
+		float cellProbability = probabilities[index];
+		float pointInCellPdf = (float)NUMBER_OF_CELLS;
+		return (cellProbability * pointInCellPdf) / (4.f * M_PI);
+	}
+};
+// --- Directional Grid End ---
 
 class RayTracer {
 public:
@@ -684,9 +811,6 @@ public:
 	// Cached vertices will be stored in a BVH structure
 	PointBVH* cacheBVH;
 	std::vector<PathVertex> globalCacheList;
-	// Ground Truth: 8192/16384					(should really be an absurd number to eliminate variance)
-	// Testing SPPs: 128/256/512/1024/2048/4096 (render, and compare error metrics with the groung truth)
-	// int maxSPP = 8192;
 	int maxSPP;
 	int learningThreshold;
 
@@ -715,6 +839,7 @@ public:
 		perThreadPathVertexRecords.resize(numProcs);
 		perThreadStats.resize(numProcs);
 
+		cacheBVH = nullptr;
 		renderMethod = _method;
 		maxSPP = _spp;
 		learningThreshold = maxSPP / 8;
@@ -723,10 +848,11 @@ public:
 
 		// Assuming our scene is ready to go
 		// Shoot Photons here for Photon Mapping
-		if (renderMethod == "photon_map") {
-			std::cout << "Photon Mapping First Pass: Shooting Photons...\n";
+		// Path Guiding with Photons - First compute photon maps
+		if (renderMethod == "photon_map" || renderMethod == "path_guide_photon") {
+			std::cout << "Shooting Photons...\n";
 			shootPhotons(samplers, NUM_OF_PHOTONS_TO_SHOOT);
-			std::cout << "Photon Mapping First Pass Completed! Global Photon Map Size: " << globalPhotonMap.getSize()
+			std::cout << "Shooting Photons Phase Completed! Global Photon Map Size : " << globalPhotonMap.getSize()
 				<< " | Caustic Photon Map Size: " << causticPhotonMap.getSize() << std::endl;
 		}
 	}
@@ -844,13 +970,13 @@ public:
 	// Emit photons
 	// Trace photons
 	// Store in Photon Map
+	// Shoot fixed number photons
+	// For each photon
+	//  • Sample light
+	//  • Sample outgoing direction
+	//  • Recursively trace into the scene
+	//  • Similar to light tracing
 	void shootPhotons(Sampler* sampler, int numPhotons) {
-		// Shoot fixed number photons
-		// For each photon
-		//  • Sample light
-		//  • Sample outgoing direction
-		//  • Recursively trace into the scene
-		//  • Similar to light tracing
 		globalPhotonMap.clearMap();
 		causticPhotonMap.clearMap();
 		for (int i = 0; i < numPhotons; i++) {
@@ -859,235 +985,259 @@ public:
 			Light* light = scene->sampleLight(sampler, pmfLight);
 			if (light == nullptr || pmfLight <= 0.f) continue;
 
-			// Sampled light is an area light
-			if (light->isArea()) {
-				// Sample outgoing direction
-				float pdfDirection = 0.f;
-				Vec4 wi = light->sampleDirectionFromLight(sampler, pdfDirection);
-				if (pdfDirection <= 0.f) continue;
+			// Sample position
+			float pdfPosition = 0.f;
+			Vec4 position = light->samplePositionFromLight(sampler, pdfPosition);
+			if (pdfPosition <= 0.f) continue;
 
-				// Sample position
-				float pdfPosition = 0.f;
-				Vec4 position = light->samplePositionFromLight(sampler, pdfPosition);
-				if (pdfPosition <= 0.f) continue;
+			// Sample outgoing direction
+			float pdfDirection = 0.f;
+			Vec4 wi = light->sampleDirectionFromLight(sampler, pdfDirection);
+			if (pdfDirection <= 0.f) continue;
 
-				// Get emission (Le)
-				Colour emission = light->evaluate(-wi);
-				if (emission.Lum() < 1e-8f) continue;
+			// Get emission (Le)
+			Colour emission = light->evaluate(-wi);
+			if (emission.Lum() < 1e-8f) continue;
 
-				// Sample light normal
-				Vec4 lightNormal = light->normal(ShadingData(position, wi), wi);
+			// Sample light normal
+			Vec4 lightNormal = light->normal(ShadingData(position, wi), wi);
 
-				// Calculate flux
-				float cosine = std::fabs(Dot(wi, lightNormal));
-				float pABsdf = pdfDirection * pdfPosition * pmfLight * (float)numPhotons;
-				if (pABsdf < EPSILON) continue;
-				float invPA = 1.f / pABsdf;
-				Colour flux = emission * cosine * invPA;
+			// Calculate flux
+			float cosine = light->isArea() ? std::max(0.f, Dot(wi, lightNormal)) : 1.f;
+			if (cosine <= 0.f) continue;
 
-				int sign = (Dot(wi, lightNormal) > 0.f) ? 1 : -1;
-				Ray r(position + lightNormal * sign * EPSILON, wi);
-				tracePhotonPath(r, sampler, flux, 0);
-			}
-			// Sampled Light is an Environment Map
-			else {
-				// Sample direction
-				float pdfDirection = 0.f;
-				Vec4 photonDir = light->sampleDirectionFromLight(sampler, pdfDirection);
-				if (pdfDirection <= 0.f) continue;
+			float pABsdf = pdfDirection * pdfPosition * pmfLight * (float)numPhotons;
+			if (pABsdf < EPSILON) continue;
 
-				// The direction to the light for evaluation and orientation is the opposite
-				Vec4 dirToLight = -photonDir;
-				Vec4 wi = dirToLight.normalize();
+			float invPA = 1.f / pABsdf;
+			Colour flux = emission * cosine * invPA;
 
-				// Get emission (Le)
-				Colour emission = light->evaluate(wi);
-				if (emission.Lum() < 1e-8f) continue;
-
-				// Sample position on the scene bounds - Disk Method
-				float pdfPosition = 0.f;
-				Vec4 position = light->samplePositionFromLight(sampler, pdfPosition);
-				if (pdfPosition <= 0.f) continue;
-
-				// Overall PDF is product of Direction PDF and Position on bounds PDF - Disk Area
-				float pABsdf = pdfDirection * pdfPosition * pmfLight * (float)numPhotons;
-				if (pABsdf < EPSILON) continue;
-
-				// Calculate flux
-				float invPA = 1.f / pABsdf;
-				Colour flux = emission * invPA;
-				
-				Ray r(position + wi * EPSILON, photonDir);
-				tracePhotonPath(r, sampler, flux, 0);
-			}
+			// Ray offset and trace photon path
+			int sign = (Dot(wi, lightNormal) > 0.f) ? 1 : -1;
+			Ray r(position + lightNormal * sign * EPSILON, wi);
+			tracePhotonPath(r, sampler, flux, 0);
 		}
 		// Build Global and Caustic Photon Maps
 		globalPhotonMap.build();
 		causticPhotonMap.build();
 	}
 
-	// Second Pass - Ray Trace From Eye
 	void tracePhotonPath(Ray& r, Sampler* sampler, Colour flux, int depth, bool isCausticPath = false) {
-		// Depends on the material
-		// Trace rays further OR
-		//  • Access photon map
-		//  • Compute Density estimation
 		if (depth >= MAX_DEPTH) return;
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
-		if (shadingData.t < FLT_MAX) {
-			// Return is it's a light
-			if (shadingData.bsdf->isLight()) return;
+		
+		// Terminate if we're at Background/Environment Map or an emitter
+		if (shadingData.t >= FLT_MAX) return;
+		if (shadingData.bsdf == nullptr) return;
+		if (shadingData.bsdf->isLight()) return;
 
-			// Store the Photon
-			bool isSpecular = shadingData.bsdf->isPureSpecular();
-			if (depth > 0 && !isSpecular) {
-				Photon photon;
-				photon.position = shadingData.x;
-				photon.normal = shadingData.sNormal;
-				photon.wi = -r.dir;				
-				photon.flux = flux;
-
-				// Check condition to store in caustic or global photon map
-				if (isCausticPath) causticPhotonMap.insertPhoton(photon);
-				else globalPhotonMap.insertPhoton(photon);
-			}
-
-			// Sample BSDF
-			float pdfBsdf = 0.f;
-			Colour fBsdf(0.f, 0.f, 0.f);
-			Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
-			if (pdfBsdf <= 0.f) return;
-
-			// Calculate new flux
-			float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
-			Colour bounceWeight = fBsdf * (cosTheta / pdfBsdf);
-
-			// Apply Russian Roulette
-			if (depth >= 3) {
-				float maxChannel = std::max({ bounceWeight.r, bounceWeight.g, bounceWeight.b });
-				float rrp = std::min(std::max(maxChannel, 0.2f), 0.95f);
-				if (sampler->next() > rrp) return;
-				bounceWeight = bounceWeight / rrp;
-			}
-			
-			flux = flux * bounceWeight;
-			if (flux.Lum() < 1e-8f) return;
-			
-			int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
-			Ray nextRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
-			bool nextIsCaustic = (depth == 0) ? isSpecular : (isCausticPath && isSpecular);
-			tracePhotonPath(nextRay, sampler, flux, depth + 1, nextIsCaustic);
+		// Store the Photon on Non Specular Surfaces
+		bool isSpecular = shadingData.bsdf->isPureSpecular();
+		if (depth >= 0 && !isSpecular) {
+			// To Render Photon Map Do -> if (depth > 0 && !isSpecular
+			// To Guide with Photons leave as is!
+			// Check condition to store in caustic or global photon map
+			Photon photon{ shadingData.x, shadingData.sNormal, -r.dir, flux };
+			if (isCausticPath) causticPhotonMap.insertPhoton(photon);
+			else globalPhotonMap.insertPhoton(photon);
 		}
+
+		// Sample BSDF for next bounce
+		float pdfBsdf = 0.f;
+		Colour fBsdf(0.f, 0.f, 0.f);
+		Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf);
+		if (pdfBsdf <= 0.f) return;
+
+		// Calculate weight
+		float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
+		Colour bounceWeight = fBsdf * (cosTheta / pdfBsdf);
+
+		// Apply Russian Roulette
+		if (depth > 3) {
+			// float rrp = std::min(std::max(flux.Lum(), 0.1f), 0.95f);
+			float rrp = std::min(std::max(bounceWeight.Lum(), 0.1f), 0.95f);
+			if (sampler->next() > rrp) return;
+			bounceWeight = bounceWeight / rrp;
+		}
+
+		// Update flux
+		flux = flux * bounceWeight;
+		if (flux.Lum() < 1e-8f) return;
+
+		int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
+		Ray nextRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
+		
+		// Stay caustic as long as we do not hit non specular surface
+		bool nextIsCaustic = (depth == 0) ? isSpecular : (isCausticPath && isSpecular);
+		tracePhotonPath(nextRay, sampler, flux, depth + 1, nextIsCaustic);
 	}
 
-	Colour traceCameraRay(Ray& r, Sampler* sampler, int depth = 0, bool isFinalGatherRay = false, bool isPreviousSpecular = false, float previousBsdfPdf = 0.f) {
+	// Second Pass - Ray Trace From Eye
+	// Depends on the material
+	// Trace rays further OR
+	//  • Access photon map
+	//  • Compute Density estimation
+	Colour traceCameraRay(Ray& r, Sampler* sampler, std::vector<NearestPhoton>& heapWorkspace, int depth = 0, bool isFinalGatherRay = false, bool isPreviousSpecular = false) {
 		if (depth >= MAX_DEPTH) return Colour(0.f, 0.f, 0.f);
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
-		if (shadingData.t < FLT_MAX) {
-			// First depth ternary check to avoid double emission contribution
-			if (shadingData.bsdf->isLight()) {
-				Colour emission = shadingData.bsdf->emit(shadingData, shadingData.wo);
-				if (depth == 0 || isPreviousSpecular) return emission;
-				// Evaluate MIS for Area Light
-				// Area Light PDF and PMF
-				float pmfLight = 1.f / scene->lights.size();
-				float pdfLight = 1.f / scene->triangles[intersection.ID].area;
 
-				float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
-				if (cosThetaPrime <= 0.f) return Colour(0.f, 0.f, 0.f);
-				float distanceSquare = SQ(intersection.t);
-				if (distanceSquare < EPSILON) return Colour(0.f, 0.f, 0.f);
-
-				// Calculate pA of Light and BSDF for MIS
-				float pALight = pdfLight * pmfLight;
-				float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
-
-				// Calculate Weight for MIS
-				float wind = weightPowerHeuristics(pABsdf, pALight);
-				return emission * wind;
+		// Missed Scene, evaluate Background/Environment Map
+		if (shadingData.t >= FLT_MAX) {
+			if (depth == 0 || isPreviousSpecular) {
+				return scene->background->evaluate(r.dir);
 			}
+			return Colour(0.f, 0.f, 0.f);
+		}
 
-			bool isGlossy = false;
-			float pdfBsdf = 0.f;
-			Colour fBsdf(0.f, 0.f, 0.f);
-			Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf, &isGlossy);
-
-			// Perfect Specular or Glossy Surfaces
-			bool requiresRayTrace = (shadingData.bsdf->isPureSpecular() || isGlossy);
-			if (requiresRayTrace) {
-				// Specular Surface
-				if (pdfBsdf <= EPSILON) return Colour(0.f, 0.f, 0.f);
-				
-				int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
-				Ray nextRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
-				Colour incoming = traceCameraRay(nextRay, sampler, depth + 1, isFinalGatherRay, true, pdfBsdf);
-				
-				float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
-				return (incoming * fBsdf * cosTheta) / pdfBsdf;
+		// Emitter found, make sure to not double count it!
+		if (shadingData.bsdf->isLight()) {
+			if (depth == 0 || isPreviousSpecular) {
+				return shadingData.bsdf->emit(shadingData, shadingData.wo);
 			}
+			return Colour(0.f, 0.f, 0.f);
+		}
 
-			// Diffuse Surfaces - Compute Direct Lighting
+		// Sample BSDF to determine if we are dealing with Diffuse, or Specular/Glossy
+		bool isGlossy = false;
+		float pdfBsdf = 0.f;
+		Colour fBsdf(0.f, 0.f, 0.f);
+		Vec4 wiNext = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfBsdf, &isGlossy);
+		
+		// Specular/Glossy Surfaces, Ray Trace Them!
+		bool requiresRayTrace = (shadingData.bsdf->isPureSpecular() || isGlossy);
+		if (requiresRayTrace) {
+			if (pdfBsdf <= EPSILON) return Colour(0.f, 0.f, 0.f);
+
+			// Compute Direct Lighting
 			Colour direct = computeDirect(shadingData, sampler);
 
-			// Radius for Caustics & Compute Indirect Lighting for Caustic Photon Map
-			float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
-			float causticRadius = sceneDiagonal * 0.01f;
-			Colour indirectCaustic = causticPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, N_PHOTONS_CAUSTIC, causticRadius);
+			int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
+			Ray nextRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
+			Colour Li = traceCameraRay(nextRay, sampler, heapWorkspace, depth + 1, isFinalGatherRay, true);
 
-			// Compute Indirect Lighting for Global Photon Map
-			Colour indirectGlobal(0.f, 0.f, 0.f);
-			if (!isFinalGatherRay) {
-				// Final Gathering Stage to Battle with Blurry Images and Light Leaks
-				// Shoot extra rays from first non-specular hit point
-				if (pdfBsdf > EPSILON) {
-					// Shoot final gather ray and apply the formula as usual
-					float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
-					int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
-					Ray finalGatherRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
-					Colour incomingRadiance = traceCameraRay(finalGatherRay, sampler, depth + 1, true, false, pdfBsdf);
-					indirectGlobal = (incomingRadiance * fBsdf * cosTheta) / pdfBsdf;
-				}
-			} else {
-				// Extra bounce is over, we can estimate the density radiance now at secondary hit point/s!
-				float globalRadius = sceneDiagonal * 0.05f;
-				indirectGlobal = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, N_PHOTONS_GLOBAL, globalRadius);
-			}
-			// Combine results - Ld + Lg + Lc
-			Colour finalRadiance = direct + indirectGlobal + indirectCaustic;
-			if (!finalRadiance.isValid()) return Colour(0.f, 0.f, 0.f);
-			return finalRadiance;
+			float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
+			Colour indirect = (Li * fBsdf * cosTheta) / pdfBsdf;
+			return direct + indirect;
 		}
-		// Evaluate MIS for Environment Map
-		// Calculate Background Colour
-		Colour backgroundColour = scene->background->evaluate(r.dir);
-		if (depth == 0 || isPreviousSpecular) return backgroundColour;
-		if (backgroundColour.Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
-		
-		// Infinite Light PDF and PMF
-		float pmfLight = 1.f / scene->lights.size();
-		float pdfLight = scene->background->PDF(shadingData, r.dir);
 
-		// Calculate pA of Light and BSDF for MIS
-		float pALight = pmfLight * pdfLight;
-		float pABsdf = previousBsdfPdf;
+		// Diffuse and Non Specular Surfaces
+		float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
+		float globalRadius = sceneDiagonal * 0.02f;
+		float causticRadius = sceneDiagonal * 0.005f;
 
-		// Calculate Weight for MIS
-		float wind = weightPowerHeuristics(pABsdf, pALight);
-		return backgroundColour * wind;
+		// Compute Direct Lighting
+		Colour direct = computeDirect(shadingData, sampler);
+
+		// Caustic Radiance via Density Estimation
+		Colour caustic = causticPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, heapWorkspace, N_PHOTONS_CAUSTIC, causticRadius);
+
+		// Compute Indirect Lighting for Global Photon Map
+		Colour indirect(0.f, 0.f, 0.f);
+
+		if (!isFinalGatherRay) {
+			// Final Gathering Stage to Battle with Blurry Images and Light Leaks
+			// Shoot extra rays from first non-specular hit point
+			if (pdfBsdf > EPSILON) {
+				// Shoot final gather ray and apply the formula as usual
+				int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
+				Ray finalGatherRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
+				Colour Li = traceCameraRay(finalGatherRay, sampler, heapWorkspace, depth + 1, true, false);
+				
+				float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
+				indirect = (Li * fBsdf * cosTheta) / pdfBsdf;
+			}
+		} else {
+			// Extra bounce is over, we can estimate the density radiance now at secondary hit point/s!
+			indirect = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, heapWorkspace, N_PHOTONS_GLOBAL, globalRadius);
+		}
+		// Combine results - Ld + Lg + Lc
+		Colour finalRadiance = direct + indirect + caustic;
+		if (!finalRadiance.isValid()) return Colour(0.f, 0.f, 0.f);
+		return finalRadiance;
 	}
 	// --- Photon Mapping [Jensen 1995, 1996] Functions End ---
 
 	// --- Path Guiding Algorithm Work Start ---
+	// I will utilize 1D Piecewise Distribution for Learning from Fresnel Probabilities
+	// https://www.pbr-book.org/4ed/Sampling_Algorithms/Sampling_1D_Functions
+	struct FresnelProbabilitySelect {
+		// Attributes
+		static constexpr int NUM_OF_BINS = 8;
+		float bins[NUM_OF_BINS]{};
+		float totalWeight = 0.f;
+		float uniformFraction = 0.05f;
+
+		// Methods
+		void clear() {
+			for (auto& bin : bins) { bin = 0.f; }
+			totalWeight = 0.f;
+		}
+
+		void insert(float selectProbability, float weight) {
+			if (weight <= 0.f || selectProbability < 0.f || selectProbability >= 1.f || std::isnan(selectProbability)) return;
+			// Map the PSS [0,1) of selectProbability to index
+			int index = (int)(selectProbability * NUM_OF_BINS);
+			index = std::max(0, std::min(index, NUM_OF_BINS - 1));
+
+			bins[index] += weight;
+			totalWeight += weight;
+		}
+
+		void sample(float r1, float& outSelectProbability, float& outPdf) const {
+			// If weight is less or equal than zero then handle as uniform case
+			if (totalWeight <= 0.f) { outSelectProbability = r1; outPdf = 1.f; return; }
+
+			// Calculate bin probabilities
+			float binProbabilities[NUM_OF_BINS];
+			float uniformPerBin = uniformFraction / NUM_OF_BINS;
+			float learnedFraction = 1.f - uniformFraction;
+
+			for (int i = 0; i < NUM_OF_BINS; i++) {
+				float learnedProbability = (bins[i] / totalWeight) * learnedFraction;
+				binProbabilities[i] = learnedProbability + uniformPerBin;
+			}
+
+			// Sample CDF to pick which bin to pick
+			float accumulated = 0.f;
+			for (int i = 0; i < NUM_OF_BINS; i++) {
+				float binProbability = binProbabilities[i];
+				if (r1 < accumulated + binProbability || i == NUM_OF_BINS - 1) {
+					r1 = (r1 - accumulated) / binProbability;
+					r1 = std::min(std::max(r1, 0.f), 0.999999f);
+					outSelectProbability = (i + r1) / (float)NUM_OF_BINS;
+					outPdf = binProbability * NUM_OF_BINS;
+					return;
+				}
+				accumulated += binProbability;
+			}
+		}
+
+		float pdf(float selectProbability) const {
+			if (selectProbability < 0.f || selectProbability >= 1.f || std::isnan(selectProbability)) return 0.f;
+			if (totalWeight <= 0.f) return 1.f;
+
+			// Map the PSS [0,1) of selectProbability to index
+			int index = (int)(selectProbability * NUM_OF_BINS);
+			index = std::max(0, std::min(index, NUM_OF_BINS - 1));
+
+			float uniformPerBin = uniformFraction / NUM_OF_BINS;
+			float learnedFraction = 1.f - uniformFraction;
+			float learnedProbability = (bins[index] / totalWeight) * learnedFraction;
+			return (learnedProbability + uniformPerBin) * NUM_OF_BINS;
+		}
+	};
+
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
+	// Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, FixedQuadTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
 		// --- 1. Forward Pass Phase ---
 		thread_local std::vector<ForwardPassRecord> records;
 		thread_local std::vector<const PathVertex*> nearbyVertices;
 		// thread_local std::priority_queue<NearestPathVertex> maxHeap;
 		thread_local HeapKNNQueue<MAX_NEARBY_VERTICES> maxHeap;
-		records.reserve(10);                          // Max depth: 8, + 2 buffer space
-		nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
+		// records.reserve(10);                          // Max depth: 8, + 2 buffer space
+		// nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
 		
 		// Clear these vectors and the max heap from the previous bounce just in case
 		records.clear();
@@ -1115,13 +1265,9 @@ public:
 				}
 			}
 			// Update Accumulators
-			if (enableNEE) {
-				trainingRadiance = records[i].misEmission + (records[i].bsdfWeight * trainingRadiance);
-				pixelRadiance = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * pixelRadiance);
-			} else {
-				trainingRadiance = records[i].emission + (records[i].bsdfWeight * trainingRadiance);
-				pixelRadiance = trainingRadiance;
-			}
+			if (enableNEE) trainingRadiance = records[i].misEmission + records[i].directLighting + (records[i].bsdfWeight * trainingRadiance);
+			else trainingRadiance = records[i].emission + (records[i].bsdfWeight * trainingRadiance);
+			pixelRadiance = trainingRadiance;
 		}
 		return pixelRadiance.isValid() ? pixelRadiance : Colour(0.f, 0.f, 0.f);
 	}
@@ -1132,9 +1278,14 @@ public:
 	//    -> Project wi into PSS
 	//    -> Invert BSDF sampling
 	//    -> Sample PSS
-	// void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVH* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, std::priority_queue<NearestPathVertex>& maxHeap, ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
-	template <int MAX_K>
-	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records, PointBVH* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, HeapKNNQueue<MAX_K>& maxHeap, ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+	template <int MAX_K = MAX_NEARBY_VERTICES>
+	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records,
+		                       PointBVH* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices,
+		                       HeapKNNQueue<MAX_K>& maxHeap, ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+	// template <int MAX_K = MAX_NEARBY_VERTICES>
+	// void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records,
+	//	                       PointBVH* cache, FixedQuadTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, HeapKNNQueue<MAX_K>& maxHeap,
+	//	                       ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 
@@ -1181,6 +1332,7 @@ public:
 
 			// Store if the current surface is specular
 			bool isSpecular = shadingData.bsdf->isPureSpecular();
+			bool isGlass = shadingData.bsdf->canLearnFresnel();
 
 			// Why have I applied RRP at the last depth...
 			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
@@ -1193,103 +1345,104 @@ public:
 
 			// Must run Path Guiding before calculating direct lighting
 			bool usePathGuiding = false;
-			float best_lobe_selection = sampler->next();
-			if (isGuidingPhase && cache != nullptr && !isSpecular) {
+			FresnelProbabilitySelect lobeSelection;
+			lobeSelection.clear();
+			qTree.clear();
+			if (isGuidingPhase && cache != nullptr && (!isSpecular || isGlass) && depth <= MAX_GUIDING_DEPTH) {
 				// We are in the Path Guiding Phase
-				#if SEARCH_KNN
 				// BVH will do kNN Search when retrieving nearest vertices (faster)
-				float radiusSq = FLT_MAX;
+				float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
+				float maxRadius = sceneDiagonal * 0.04f;
+				float maxRadiusSq = maxRadius * maxRadius;
 				nearbyVertices.clear();
+
 				// BVH Nearest Path Vertices Search will be timed inside this scope
 				{
 					Timer bvhSearchTimer(stats.bvhSearchTimeMs);
 					// cache->kNNSearch(shadingData.x, radiusSq, maxHeap, k);
-					cache->kNNSearch(shadingData.x, radiusSq, maxHeap);
+					cache->kNNSearch(shadingData.x, maxRadiusSq, maxHeap);
 				}
 
+				float maxRadiusSqFound = 0.f;
 				while (!maxHeap.empty()) {
 					const PathVertex* poppedVertex = maxHeap.top().vertex;
+					maxRadiusSqFound = std::max(maxHeap.top().distanceSq, maxRadiusSqFound);
 					nearbyVertices.push_back(poppedVertex);
 					maxHeap.pop();
 				}
-				#else
+				float radiusSq = std::max(maxRadiusSqFound, EPSILON);
+
 				// BVH will do radius based search when retrieving nearest vertices (slower)
-				float radius = 0.05f;
-				float radiusSq = radius * radius;
-				nearbyVertices.clear();
+				// float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
+				// float radius = sceneDiagonal * 0.04f;
+				// float radiusSq = radius * radius;
+				// nearbyVertices.clear();
 
 				// Define a Random Device and Initialize the Mersenne Twister to Generate RNGs
-				thread_local std::mt19937 mt{ std::random_device {}() };
+				// thread_local std::mt19937 mt{ std::random_device {}() };
 
 				// BVH Nearest Path Vertices Search will be timed inside this scope
-				{
-					Timer bvhSearchTimer(stats.bvhSearchTimeMs);
-					cache->radiusSearch(shadingData.x, radiusSq, nearbyVertices);
-					if (nearbyVertices.size() > MAX_NEARBY_VERTICES) {
-						// Shuffle and resize the vector list we obtain from BVH Search
-						std::shuffle(std::begin(nearbyVertices), std::end(nearbyVertices), mt);
-						nearbyVertices.resize(MAX_NEARBY_VERTICES);
-					}
-				}
-				#endif
+				// {
+					 // Timer bvhSearchTimer(stats.bvhSearchTimeMs);
+					 // cache->radiusSearch(shadingData.x, radiusSq, nearbyVertices);
+					 // if (nearbyVertices.size() > MAX_NEARBY_VERTICES) {
+						 // Shuffle and resize the vector list we obtain from BVH Search
+						 // std::shuffle(std::begin(nearbyVertices), std::end(nearbyVertices), mt);
+						 // nearbyVertices.resize(MAX_NEARBY_VERTICES);
+					 // }
+				// }
 
 				// Debugging
 				#if DEBUG_GUIDED_PATH
-				thread_local int debugSearchCount = 0;
-				thread_local int debugTotalVertexCount = 0;
+					thread_local int debugSearchCount = 0;
+					thread_local int debugTotalVertexCount = 0;
 
-				debugSearchCount++;
-				debugTotalVertexCount += nearbyVertices.size();
+					debugSearchCount++;
+					debugTotalVertexCount += nearbyVertices.size();
 
-				if (debugSearchCount == 10000) {
-					int average = debugTotalVertexCount / 10000;
-					printf("Thread Debug: Avg. Vertices Found Per Bounce: %d\n", average);
-					debugSearchCount = 0;
-					debugTotalVertexCount = 0;
-				}
+					if (debugSearchCount == 10000) {
+						int average = debugTotalVertexCount / 10000;
+						printf("Thread Debug: Avg. Vertices Found Per Bounce: %d\n", average);
+						debugSearchCount = 0;
+						debugTotalVertexCount = 0;
+					}
 				#endif
 				// Debugging End
 
 				int acceptedVertices = 0;
-				float totalInsertedWeight = 0.f;
 				// QTree Building will be timed inside this scope
 				{
 					Timer qTreeBuildTimer(stats.qTreeBuildTimeMs);
-					// float max_weight_seen = -1.f;
 					for (const auto* vertex : nearbyVertices) {
 						if (vertex == nullptr) continue;
+
 						float cosTheta = Dot(shadingData.sNormal, vertex->wi);
-						if (cosTheta < 0.f) continue;
+						if (std::fabs(cosTheta) < EPSILON) continue;
 						
-						float sqrtLum = std::sqrt(vertex->Li.Lum());
-						float weight = std::max(sqrtLum, 0.f);
+						float weight = std::sqrt(std::max(0.f, vertex->Li.Lum()));
 						if (weight < EPSILON) continue;
 
-						// BSDF inversion to get u, v, and u_lobe
-						float u, v, u_lobe;
+						// BSDF inversion to get u, v, and selectProbability
+						float u, v, selectProbability;
 						// BSDF Inversion will be timed inside this scope
 						{
 							Timer bsdfInvertTimer(stats.bsdfInvertTimeMs);
-							shadingData.bsdf->invert(shadingData, vertex->wi, u, v, u_lobe);
+							shadingData.bsdf->invert(shadingData, sampler, vertex->wi, u, v, selectProbability);
 						}
 						// Timing completed
-						if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) continue;
+						if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f || std::isnan(u) || std::isnan(v)) continue;
+
+						// Learn the lobe choice here
+						lobeSelection.insert(selectProbability, weight);
 
 						// Insert into the QTree
-						qTree.insert(u, v, weight);
-						totalInsertedWeight += weight;
+						if (!isGlass) qTree.insert(u, v, weight);
 						acceptedVertices++;
-
-						// if (weight > max_weight_seen) {
-							// max_weight_seen = weight;
-							// best_lobe_selection = u_lobe;
-						// }
 					}
 				}
 				// Timing completed
-				usePathGuiding = (acceptedVertices >= MIN_ACCEPTED_INSERTIONS) && (totalInsertedWeight > EPSILON);
+				usePathGuiding = (acceptedVertices >= MIN_ACCEPTED_INSERTIONS) && (lobeSelection.totalWeight > 0.f);
 				if (usePathGuiding) stats.guidedPathBounceCount++;
-				if (!usePathGuiding) qTree.clear();
 			}
 
 			// Lambda Function - Returns PDF of the BSDF
@@ -1299,15 +1452,16 @@ public:
 				if (!usePathGuiding) return basePdf;
 
 				// Sample the new pdf via BSDF inversion
-				float u, v, u_lobe;
-				shadingData.bsdf->invert(shadingData, wi, u, v, u_lobe);
+				float u, v, selectProbability;
+				shadingData.bsdf->invert(shadingData, sampler, wi, u, v, selectProbability);
 
 				// If not valid u, return BSDF PDF
 				if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) return basePdf * BSDF_FRACTION;
 
 				// If inversion OK, return MIS combined PDF for Path Guiding
-				float qTreePdf = qTree.pdf(u, v);
-				return basePdf * (BSDF_FRACTION + QTREE_FRACTION * qTreePdf);
+				float qTreePdf = isGlass ? 1.f : qTree.pdf(u, v);
+				float lobePdf = lobeSelection.pdf(selectProbability);
+				return basePdf * (BSDF_FRACTION + QTREE_FRACTION * (qTreePdf * lobePdf));
 			};
 
 			// Save the direct lighting (NEE) to the record
@@ -1331,53 +1485,71 @@ public:
 			if (usePathGuiding) {
 				// Pick a stragety to either guide the sampling or standard BSDF sampling
 				float strategy = sampler->next();
+				float sampledPdf = 0.f;
 				if (strategy < QTREE_FRACTION) {
-					// Do Guided Sampling
-					float r1 = sampler->next();
-					float r2 = sampler->next();
 					float u_out = 0.f, v_out = 0.f, treePdfIgnored = 0.f;
-					qTree.sample(r1, r2, u_out, v_out, treePdfIgnored);
-
+					// Do Guided Sampling
+					if (!isGlass) {
+						float r1 = sampler->next();
+						float r2 = sampler->next();
+						qTree.sample(r1, r2, u_out, v_out, treePdfIgnored);
+					}
+					// Sample lobe separately
+					float r3 = sampler->next();
+					
 					// Then do BSDF sampling with the new numbers obtained
+					float selectProbability = 0.f;
+					float lobePdfIgnored = 0.f;
+					lobeSelection.sample(r3, selectProbability, lobePdfIgnored);
+
 					GuidedPathSampler dummySampler;
-					dummySampler.set(u_out, v_out, best_lobe_selection);
-					float pdfIgnored = 0.f;
-					wi = shadingData.bsdf->sample(shadingData, &dummySampler, fBsdf, pdfIgnored);
+					dummySampler.set(u_out, v_out, selectProbability);
+					wi = shadingData.bsdf->sample(shadingData, &dummySampler, fBsdf, sampledPdf);
 				} else {
 					// Do Standart Sampling
-					float pdfIgnored = 0.f;
-					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfIgnored);
+					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, sampledPdf);
 				}
-				// Defensive Sampling - MIS Mixture PDF
-				pdfCombined = forwardPdf(wi);
+				if (isGlass) {
+					float u, v, selectionProbability;
+					shadingData.bsdf->invert(shadingData, sampler, wi, u, v, selectionProbability);
+					float lobePdf = lobeSelection.pdf(selectionProbability);
+					// Defensive Sampling - MIS Mixture PDF
+					pdfCombined = sampledPdf * (BSDF_FRACTION + QTREE_FRACTION * lobePdf);
+				}
+				else {
+					// Defensive Sampling - MIS Mixture PDF
+					pdfCombined = forwardPdf(wi);
+				}
 			} else {
 				wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfCombined);
 			}
 
+			// Debugging
 			#if DEBUG_GUIDED_PATH
-			// If this is the FIRST bounce (depth == 0) and we are guiding
-			if (depth == 0 && usePathGuiding) {
-				// Invert debug sample
-				float uDebug = 0.f, vDebug = 0.f, lobeDebug = 0.f;
-				shadingData.bsdf->invert(shadingData, wi, uDebug, vDebug, lobeDebug);
-				float qDebug = (uDebug >= 0.f) ? qTree.pdf(uDebug, vDebug) : 0.f;
+				// If this is the FIRST bounce (depth == 0) and we are guiding
+				if (depth == 0 && usePathGuiding) {
+					// Invert debug sample
+					float uDebug = 0.f, vDebug = 0.f, lobeDebug = 0.f;
+					shadingData.bsdf->invert(shadingData, sampler, wi, uDebug, vDebug, lobeDebug);
+					float qDebug = (uDebug >= 0.f) ? qTree.pdf(uDebug, vDebug) : 0.f;
 				
-				// Scale for visibility
-				float debugColor = std::min(qDebug * 0.1f, 1.0f); 
+					// Scale for visibility
+					float debugColor = std::min(qDebug * 0.1f, 1.0f); 
 
-				// Modify the record to output QTree debug colours
-				record.emission = Colour(debugColor, debugColor, debugColor);
-				record.misEmission = record.emission;
-				record.directLighting = Colour(0.f, 0.f, 0.f);
-				record.bsdfWeight = Colour(0.f, 0.f, 0.f);
-				record.storeRecord = false;
-				records.push_back(record);
-				qTree.clear();
+					// Modify the record to output QTree debug colours
+					record.emission = Colour(debugColor, debugColor, debugColor);
+					record.misEmission = record.emission;
+					record.directLighting = Colour(0.f, 0.f, 0.f);
+					record.bsdfWeight = Colour(0.f, 0.f, 0.f);
+					record.storeRecord = false;
+					records.push_back(record);
+					qTree.clear();
 
-				// We just want to see the QTree value here.
-				return;
-			}
+					// We just want to see the QTree value here.
+					return;
+				}
 			#endif
+			// Debugging End
 
 			// Clear the QTree before the next bounce
 			qTree.clear();
@@ -1387,14 +1559,15 @@ public:
 				records.push_back(record);
 				return;
 			}
+
 			// Check cosine term
-			float cosTheta = fabs(Dot(wi, shadingData.sNormal));
+			float cosTheta = std::fabs(Dot(wi, shadingData.sNormal));
 			if (cosTheta <= 0.f) { records.push_back(record); return; }
 
 			// Store the necessary records in the record structure
 			record.wi = wi;
 			record.bsdfWeight = (fBsdf * cosTheta) / (pdfCombined * rrpRecord);
-			record.storeRecord = !isSpecular;
+			record.storeRecord = (!isSpecular || isGlass);
 			records.push_back(record);
 
 			// Define indirect ray for the next bounce, and recurse through the function
@@ -1426,16 +1599,169 @@ public:
 	}
 	// --- Path Guiding Algorithm Work End ---
 
+	// ---  Path Trace Photon Guided Start ---
+	// First compute photon maps
+	// Then path trace. if the surface is specular, sample as usual.
+	// If it is not specular, do the following:
+	// Gather nearby photons
+	//	Make a grid in[0..1]X[0..1] with some cells, e.g. 32X32
+	//	Project the directions of the photons into the grid (be careful to ensure that they are point away from the surface, not towards the surface)
+	//	Pick a random number
+	//	If < 0.5 sample BSDF
+	//	Else sample a cell from the grid, then sample a point in the cell and Convert back to world space
+	//	Guiding_PDF is cell_pdf * point_in_cell_pdf / 4pi
+	//	PDF is 0.5 X BSDF_pdf + 0.5 X Guiding_PDF
+	//	Trace
+	Colour pathTracePhotonGuidedRecursive(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler,
+		                                  std::vector<Photon>& photonWorkspace, std::vector<NearestPhoton>& heapWorkspace,
+		                                  float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+		IntersectionData intersection = scene->traverse(r);
+		ShadingData shadingData = scene->calculateShadingData(intersection, r);
+		if (shadingData.t < FLT_MAX) {
+			if (shadingData.bsdf->isLight()) {
+				Colour emittedColour = shadingData.bsdf->emit(shadingData, shadingData.wo);
+				if (depth == 0 || previousSurfaceSpecular) return pathThroughput * emittedColour;
+				// Evaluate MIS for Area Light
+				float pmfLight = 1.f / scene->lights.size();
+				float pdfLight = 1.f / scene->triangles[intersection.ID].area;
+
+				float cosThetaPrime = std::max(Dot(-r.dir, scene->triangles[intersection.ID].gNormal()), 0.f);
+				if (cosThetaPrime <= 0.f) return Colour(0.f, 0.f, 0.f);
+				float distanceSquare = SQ(intersection.t);
+				if (distanceSquare < EPSILON) return Colour(0.f, 0.f, 0.f);
+
+				// Calculate pA of Light and BSDF for MIS
+				float pALight = pdfLight * pmfLight;
+				float pABsdf = previousBsdfPdf * cosThetaPrime / distanceSquare;
+
+				// Calculate Weight for MIS
+				float wind = weightPowerHeuristics(pABsdf, pALight);
+				return pathThroughput * emittedColour * wind;
+			}
+
+			bool isPureSpecular = shadingData.bsdf->isPureSpecular();
+			bool usePathGuiding = false;
+			DirectionalGrid<32> directionalGrid;
+
+			if (!isPureSpecular) {
+				globalPhotonMap.gather(shadingData.x, shadingData.sNormal, photonWorkspace, heapWorkspace, 100, 0.5f);
+				if (!photonWorkspace.empty()) {
+					directionalGrid.build(photonWorkspace, shadingData);
+					usePathGuiding = true;
+				}
+			}
+
+			// MIS PDF Lambda Function, just like how I wrote one in PSS Path Guiding
+			auto forwardPdf = [&](const Vec4& wiWorld) -> float {
+				float pdfBsdf = shadingData.bsdf->PDF(shadingData, wiWorld);
+				if (usePathGuiding) {
+					Vec4 wiLocal = shadingData.frame.toLocal(wiWorld);
+					float pdfGuide = directionalGrid.pdf(wiLocal);
+					return (0.5f * pdfBsdf) + (0.5f * pdfGuide);
+				}
+				return pdfBsdf;
+			};
+
+			// Calculate Direct Lighting
+			Colour direct = pathThroughput * computeDirect(shadingData, sampler, forwardPdf);
+
+			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
+			if (depth >= MAX_DEPTH) return direct;
+
+			// Apply Russian Roulette Starting at the ray depth 4
+			// Russian Roulette should kick in normally between at depth 3 to 5
+			if (depth > 3) {
+				float rrp = std::min(std::max(EPSILON, pathThroughput.Lum()), 1.f);
+				if (sampler->next() < rrp) pathThroughput = pathThroughput / rrp;
+				else return direct;
+			}
+
+			// Calculate Indirect Lighting - Sampling Proportional to BSDF (Materials)
+			float finalPdf = 0.f;
+			Colour indirect(0.f, 0.f, 0.f);
+			Vec4 wi;
+
+			bool isSurfaceSpecular = shadingData.bsdf->isPureSpecular();
+			if (!usePathGuiding) {
+				// Standart BSDF Sampling
+				wi = shadingData.bsdf->sample(shadingData, sampler, indirect, finalPdf);
+			} else {
+				// Grid Guiding
+				// Gather Photons with KNN Search
+				if (photonWorkspace.empty()) {
+					// No photons found, do standart BSDF sampling
+					wi = shadingData.bsdf->sample(shadingData, sampler, indirect, finalPdf);
+				} else {
+					// Grid Guiding (50/50 MIS)
+					float pdfBsdf = 0.f;
+					float pdfGuide = 0.f;
+					
+					if (sampler->next() < 0.5f) {
+						// Picked BSDF Sampling
+						wi = shadingData.bsdf->sample(shadingData, sampler, indirect, pdfBsdf);
+						// Still calculate guide pdf
+						Vec4 wiLocal = shadingData.frame.toLocal(wi);
+						pdfGuide = directionalGrid.pdf(wiLocal);
+					} else {
+						// Picked Grid Sampling
+						Vec4 wiLocal = directionalGrid.sample(sampler, pdfGuide);
+						wi = shadingData.frame.toWorld(wiLocal);
+						pdfBsdf = shadingData.bsdf->PDF(shadingData, wi);
+						indirect = shadingData.bsdf->evaluate(shadingData, wi);
+					}
+					// PDF is 0.5 X BSDF_pdf + 0.5 X Guiding_PDF
+					finalPdf = (0.5f * pdfBsdf) + (0.5f * pdfGuide);
+				}
+			}
+			if (finalPdf < EPSILON) return direct;
+
+			// Update throughput
+			// Taking absolute value of cosTheta to fix GlassBSDF rendering
+			float cosTheta = fabs(Dot(wi, shadingData.sNormal));
+			if (cosTheta <= 0.f) return direct;
+			pathThroughput = (pathThroughput * indirect * cosTheta) / finalPdf;
+
+			// Eliminate non-valid bounces
+			if (!pathThroughput.isValid() || pathThroughput.Lum() < 0.f) return direct;
+			if (pathThroughput.r < 0.f || pathThroughput.g < 0.f || pathThroughput.b < 0.f) return direct;
+
+			// Recurse until path terminated
+			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
+			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
+			return direct + pathTracePhotonGuidedRecursive(indirectRay, pathThroughput, depth + 1, sampler, photonWorkspace, heapWorkspace, finalPdf, isSurfaceSpecular);
+		}
+		Colour backgroundColour = scene->background->evaluate(r.dir);
+		if (depth == 0 || previousSurfaceSpecular) return pathThroughput * backgroundColour;
+		if (backgroundColour.Lum() < 1e-8f) return Colour(0.f, 0.f, 0.f);
+		// Evaluate MIS for Environment Map
+		float pmfLight = 1.f / scene->lights.size();
+		float pdfLight = scene->background->PDF(shadingData, r.dir);
+
+		// Calculate pA of Light and BSDF for MIS
+		float pALight = pmfLight * pdfLight;
+		float pABsdf = previousBsdfPdf;
+
+		// Calculate Weight for MIS
+		float wind = weightPowerHeuristics(pABsdf, pALight);
+		return pathThroughput * backgroundColour * wind;
+	}
+
+	Colour pathTracePhotonGuided(Ray& r, Sampler* sampler, std::vector<Photon>& photonWorkspace, std::vector<NearestPhoton>& heapWorkspace) {
+		Colour pathThroughput(1.f, 1.f, 1.f);
+		return pathTracePhotonGuidedRecursive(r, pathThroughput, 0, sampler, photonWorkspace, heapWorkspace);
+	}
+	// --- Path Trace Photon Guided End ---
+
 	// --- PSS Debug ---
-	void viewPrimarySampleSpace(Ray& r, PointBVH* cache, int k) {
+	void viewPrimarySampleSpace(Ray& r, Sampler* sampler, PointBVH* cache, int k) {
 		IntersectionData intersection = scene->traverse(r);
 		if (intersection.t < FLT_MAX) {
 			ShadingData shadingData = scene->calculateShadingData(intersection, r);
-			return visualisePSSMap(shadingData, cache, k);
+			return visualisePSSMap(shadingData, sampler, cache, k);
 		}
 	}
 
-	void visualisePSSMap(ShadingData& shadingData, PointBVH* cache, int k) {
+	void visualisePSSMap(ShadingData& shadingData, Sampler* sampler, PointBVH* cache, int k) {
 		// Create debug structures
 		std::cout << "\[DEBUG] Generating Primary Sample Space Visualisation..." << std::endl;
 		// std::priority_queue<NearestPathVertex> debugMaxHeap;
@@ -1463,7 +1789,7 @@ public:
 
 			// BSDF Invert
 			float uDebug, vDebug, selectDebug;
-			shadingData.bsdf->invert(shadingData, vertex->wi, uDebug, vDebug, selectDebug);
+			shadingData.bsdf->invert(shadingData, sampler, vertex->wi, uDebug, vDebug, selectDebug);
 			if (uDebug < 0.f || uDebug > 1.f || vDebug < 0.f || vDebug > 1.f || std::isnan(uDebug) || std::isnan(vDebug)) continue;
 
 			// QTree Insert
@@ -1522,7 +1848,8 @@ public:
 				// Normalize PDFs and Apply Gamma Correction
 				// BSDF is solid angle, QTree is PSS... need to multiply with Jacobian
 				float normPdf = std::pow(qTreePdfPSS / maxPdf, 1.f / 2.2f);
-				float normPdfDefensive = std::pow(pdfDefensive / (maxPdf * dummyPdf + EPSILON), 1.f / 2.2f);
+				float denom = std::max(maxPdf * dummyPdf, EPSILON);
+				float normPdfDefensive = std::pow(pdfDefensive / denom, 1.f / 2.2f);
 				
 				// Save the pixel into the buffer
 				int pixelIdx = ((SIZE - 1 - y) * SIZE + x) * 3;
@@ -1681,7 +2008,7 @@ public:
 		std::atomic<int> id = 0;
 		bool isGuidingPhase = (getSPP() >= learningThreshold);
 
-		if (renderMethod == "path_guide") {
+		if (renderMethod == "path_guide_pss") {
 			// Build the BVH exactly once, after collecting cache estimates in the learning phase
 			if (isGuidingPhase && !isPointBVHBuilt) {
 				std::cout << "Learning phase finished. Building BVH for cached path vertices..." << std::endl;
@@ -1714,7 +2041,13 @@ public:
 					unsigned int tile_id = 0;
 					std::vector<PathVertex>& currentThreadPathVertexRecords = perThreadPathVertexRecords[i];
 					QTree& currentThreadQTree = perThreadQTrees[i];
+					// FixedQuadTree quadTree;
 					ProfilerStats& currentThreadStats = perThreadStats[i];
+
+					std::vector<Photon> photonWorkspace;
+					std::vector<NearestPhoton> heapWorkspace;
+					photonWorkspace.reserve(100);
+					heapWorkspace.reserve(100);
 
 					while ((tile_id = id.fetch_add(1)) < total_tile_count) {
 						// Initialize Screen Tile
@@ -1734,14 +2067,19 @@ public:
 
 								// Photton Mapping [Jensen 1995]
 								if (renderMethod == "photon_map") {
-									col = traceCameraRay(ray, &samplers[i]);
+									col = traceCameraRay(ray, &samplers[i], heapWorkspace);
 								}
 								// Our novel Path Guiding in PSS
-								else if (renderMethod == "path_guide") {
+								else if (renderMethod == "path_guide_pss") {
 									col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
+									// col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, quadTree, isGuidingPhase, currentThreadStats, enableNEE);
 									if (isGuidingPhase && getSPP() == learningThreshold && x == film->width / 2 && y == film->height / 2) {
-										viewPrimarySampleSpace(ray, cacheBVH, MAX_NEARBY_VERTICES);
+										viewPrimarySampleSpace(ray, &samplers[i], cacheBVH, MAX_NEARBY_VERTICES);
 									}
+								}
+								// Path Guiding with Photons
+								else if (renderMethod == "path_guide_photon") {
+									col = pathTracePhotonGuided(ray, &samplers[i], photonWorkspace, heapWorkspace);
 								}
 								// Unidirectional Path Trace
 								else if (renderMethod == "path_trace") {
@@ -1780,7 +2118,7 @@ public:
 			}
 		}
 
-		if (renderMethod == "path_guide") {
+		if (renderMethod == "path_guide_pss") {
 			// --- Guiding Phase ---
 			if (isGuidingPhase) {
 				// Generate the profiling record	

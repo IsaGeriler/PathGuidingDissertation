@@ -50,5 +50,8 @@
     <ClInclude Include="QTree.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="FixedQuadTree.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

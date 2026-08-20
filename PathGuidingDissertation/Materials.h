@@ -123,10 +123,11 @@ public:
 	Colour emission;
 	// virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf) = 0;
 	virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) = 0;
-	virtual void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) = 0;
+	virtual void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) = 0;
 	virtual Colour evaluate(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual float PDF(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual bool isPureSpecular() = 0;
+	virtual bool canLearnFresnel() = 0;
 	virtual bool isTwoSided() = 0;
 	bool isLight() { return emission.Lum() > 0.f; }
 	void addLight(Colour _emission) { emission = _emission; }
@@ -148,6 +149,8 @@ public:
 		// Sample incoming direction (z-up coordinate system, local space)
 		float r1 = sampler->next();
 		float r2 = sampler->next();
+		// Discard r3, just for GuidedSampler consistency only (u,v,selectProbability)
+		float r3 = sampler->next();
 		Vec4 wi = SamplingDistributions::cosineSampleHemisphere(r1, r2);
 
 		// Convert wi to world space before passing to evaluate and pdf
@@ -161,7 +164,7 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
+	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Convert wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		if (wiLocal.z <= 0.f) { u = -1.f; v = -1.f; selectProbability = 0.f; return; }
@@ -178,7 +181,8 @@ public:
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		selectProbability = 0.f;
+		float r3 = sampler->next();
+		selectProbability = std::max(0.001f, std::min(r3, 0.999f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -195,6 +199,7 @@ public:
 	}
 
 	bool isPureSpecular() { return false; }
+	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -231,8 +236,11 @@ public:
 	}
 
 	// MirrorBSDF will not be inverted as this is due to Dirac Delta distribution
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
-		u = 0.f; v = 0.f; selectProbability = 0.f;
+	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
+		u = 0.f;
+		v = 0.f;
+		float r3 = sampler->next();
+		selectProbability = std::max(0.001f, std::min(r3, 0.999f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -244,6 +252,7 @@ public:
 	}
 
 	bool isPureSpecular() { return true; }
+	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -284,9 +293,11 @@ public:
 		}
 
 		// Sample phi and theta for sampling the half vector
+		// Discard r3, just for GuidedSampler consistency only (u, v, selectProbability)
 		float alphaSq = alpha * alpha;
 		float r1 = sampler->next();
 		float r2 = sampler->next();
+		float r3 = sampler->next();
 
 		float thetaM = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
 		float phiM = 2.f * M_PI * r2;
@@ -302,7 +313,7 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
+	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Convert wo and wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
@@ -331,7 +342,8 @@ public:
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		selectProbability = 0.f;
+		float r3 = sampler->next();
+		selectProbability = std::max(0.001f, std::min(r3, 0.999f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -382,6 +394,7 @@ public:
 	}
 
 	bool isPureSpecular() { return alpha < EPSILON; }
+	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -454,7 +467,7 @@ public:
 		}
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
+	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Convert wo and wi to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
@@ -467,7 +480,9 @@ public:
 		// However, we can save the Fresnel probability for the next bounce
 		u = 0.f;
 		v = 0.f;
-		selectProbability = reflect ? (F * 0.5f) : (F + ((1.f - F) * 0.5f));
+		float r3 = sampler->next();
+		r3 = std::max(0.001f, std::min(r3, 0.999f));
+		selectProbability = reflect ? (F * r3) : (F + ((1.f - F) * r3));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -479,6 +494,7 @@ public:
 	}
 
 	bool isPureSpecular() { return true; }
+	bool canLearnFresnel() { return true; }
 	bool isTwoSided() { return false; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -569,10 +585,11 @@ public:
 			return wi;
 		} else {
 			// Refract
-			if (woLocal.z < 0) wmLocal = -wmLocal;
+			bool isInside = woLocal.z < 0;
+			float eta = !isInside ? (extIOR / intIOR) : (intIOR / extIOR);
+			if (isInside) wmLocal = -wmLocal;
 			
 			float cosThetaI = std::min(std::max(Dot(wmLocal, woLocal), -1.f), 1.f);
-			float eta = (cosThetaI > 0.f) ? (extIOR / intIOR) : (intIOR / extIOR);
 			float etaSq = eta * eta;
 
 			float cosThetaISq = std::max(cosThetaI * cosThetaI, 0.f);
@@ -581,7 +598,9 @@ public:
 
 			if (sinThetaTSq >= 1.f) {
 				// Total Internal Reflection
-				Vec4 wr = shadingData.frame.toWorld(Vec4(-woLocal.x, -woLocal.y, woLocal.z));
+				// Vec4 wr = shadingData.frame.toWorld(Vec4(-woLocal.x, -woLocal.y, woLocal.z));
+				Vec4 wrLocal = -woLocal + (wmLocal * 2.f * Dot(wmLocal, woLocal));
+				Vec4 wr = shadingData.frame.toWorld(wrLocal);
 				pdf = F;
 				reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) * F / fabs(woLocal.z);
 				return wr;
@@ -598,7 +617,7 @@ public:
 		}
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
+	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Convert wi and wo to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
@@ -612,11 +631,13 @@ public:
 		bool reflect = cosThetaI * cosThetaO > 0.f;
 
 		// When alpha < EPSILON, we treated this as GlassBSDF
+		float r3 = sampler->next();
+		r3 = std::max(0.001f, std::min(r3, 0.999f));
 		if (alpha < EPSILON) {
 			float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
 			u = 0.f;
 			v = 0.f;
-			selectProbability = reflect ? (fresnel * 0.5f) : (fresnel + ((1.f - fresnel) * 0.5f));
+			selectProbability = reflect ? (fresnel * r3) : (fresnel + ((1.f - fresnel) * r3));
 			return;
 		}
 
@@ -645,13 +666,14 @@ public:
 		// u = (alphaSq / (SQ(cos(theta)) * (alphaSqMinusOne * alphaSqMinusOne) + alphaSqMinusOne)) - (1.f / alphaSqMinusOne);
 		float alphaSq = alpha * alpha;
 		float alphaSqMinusOne = (alphaSq - 1.f);
-		u = (1.f - SQ(cos(theta))) / (SQ(cos(theta)) * alphaSqMinusOne + 1.f);
+		float cosThetaSq = wmLocal.z * wmLocal.z;
+		u = (1.f - cosThetaSq) / (cosThetaSq * alphaSqMinusOne + 1.f);
 		v = phi / (2 * M_PI);
 
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		selectProbability = reflect ? (F * 0.5f) : (F + ((1.f - F) * 0.5f));
+		selectProbability = reflect ? (F * r3) : (F + ((1.f - F) * r3));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -752,6 +774,7 @@ public:
 	}
 
 	bool isPureSpecular() { return alpha < EPSILON; }
+	bool canLearnFresnel() { return true; }
 	bool isTwoSided() { return false; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -772,9 +795,11 @@ public:
 	// Methods
 	Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf, bool* sampledGlossy = nullptr) {
 		// Sample incoming direction (z-up coordinate system, local space)
-		// Using DiffuseBSDF's cosine weighted sampling 
+		// Using DiffuseBSDF's cosine weighted sampling
+		// Discard r3, just for GuidedSampler consistency only (u, v, selectProbability)
 		float r1 = sampler->next();
 		float r2 = sampler->next();
+		float r3 = sampler->next();
 		Vec4 wi = SamplingDistributions::cosineSampleHemisphere(r1, r2);
 
 		// Convert wi to world space before passing to evaluate and pdf
@@ -788,7 +813,7 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
+	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Invert Cosine Sample Hemisphere where,
 		// theta = acos(sqrt(r1)), phi = 2 * PI * r2
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
@@ -800,7 +825,8 @@ public:
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		selectProbability = 0.f;
+		float r3 = sampler->next();
+		selectProbability = std::max(0.001f, std::min(r3, 0.999f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -839,6 +865,7 @@ public:
 	}
 
 	bool isPureSpecular() { return false; }
+	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -906,7 +933,7 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
+	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Convert wi and wo to local space
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
@@ -928,6 +955,8 @@ public:
 
 		// Invert the half vector sampling for GGX distribution
 		bool isGlossy = w_glossy > w_diffuse;
+		float r3 = sampler->next();
+		r3 = std::max(0.001f, std::min(r3, 0.999f));
 		if (isGlossy) {
 			// Retrieve theta and phi from hLocal
 			float theta = SphericalCoordinates::sphericalTheta(hLocal);
@@ -942,7 +971,7 @@ public:
 			// Clamp u and v to [0, 1)
 			u = std::max(0.f, std::min(u, 0.99999f));
 			v = std::max(0.f, std::min(v, 0.99999f));
-			selectProbability = F * 0.5f;
+			selectProbability = F * r3;
 			return;
 		}
 		// Invert the diffuse part using cosine hemisphere sampling
@@ -956,7 +985,7 @@ public:
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		selectProbability = F + ((1.f - F) * 0.5f);
+		selectProbability = F + ((1.f - F) * r3);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -1006,6 +1035,7 @@ public:
 	}
 
 	bool isPureSpecular() { return false; }
+	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
 };
@@ -1059,9 +1089,9 @@ public:
 		return wi;
 	}
 
-	void invert(const ShadingData& shadingData, const Vec4& wi, float& u, float& v, float& selectProbability) {
+	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		// Add code to invert layered sampling
-		return base->invert(shadingData, wi, u, v, selectProbability);
+		return base->invert(shadingData, sampler, wi, u, v, selectProbability);
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -1098,6 +1128,7 @@ public:
 	}
 
 	bool isPureSpecular() { return base->isPureSpecular(); }
+	bool canLearnFresnel() { return base->canLearnFresnel(); }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return base->mask(shadingData); }
 };

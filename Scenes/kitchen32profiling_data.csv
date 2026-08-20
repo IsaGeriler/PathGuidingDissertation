@@ -1,0 +1,2 @@
+Total Bounces,Avg BVH Time (ms),Avg QTree Time (ms),Avg BSDF Invert Time (ms),BVH Per Bounce (us),QTree Per Bounce (us),BSDF Invert Per Bounce (us)
+5004227,6971.48,9413.71,5865.18,30.6486,41.3853,25.785
