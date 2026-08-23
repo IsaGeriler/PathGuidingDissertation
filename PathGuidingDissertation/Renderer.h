@@ -631,18 +631,18 @@ public:
 	void insertPhoton(Photon& photon) { photons.push_back(photon); }
 	void clearMap() { photons.clear(); }
 
-	Colour estimateRadiance(ShadingData& shadingData, const Vec4& position, const Vec4& normal, std::vector<NearestPhoton>& heapWorkspace, int maxPhotons = 100, float maxSearchRadius = 1.f) {
+	Colour estimateRadiance(ShadingData& shadingData, const Vec4& position, const Vec4& normal, std::vector<NearestPhoton>& nearestPhotons, int maxPhotons = 100, float maxSearchRadius = 1.f) {
 		// We cannot estimate radiance if we don't have Photons
 		if (photons.empty()) return Colour(0.f, 0.f, 0.f);
 
 		// Define the variables we'll pass to the kNN-Search
-		std::vector<NearestPhoton> nearestPhotons;
+		std::vector<NearestPhoton> nearestPhotonsList;
 		float maxDistanceSq = maxSearchRadius * maxSearchRadius;
 
 		// Do kNN-Search
 		int startIdx = 0, endIdx = (int)(photons.size());
-		searchKNN(startIdx, endIdx, maxPhotons, position, normal, maxDistanceSq, nearestPhotons);
-		if (nearestPhotons.empty()) return Colour(0.f, 0.f, 0.f);
+		searchKNN(startIdx, endIdx, maxPhotons, position, normal, maxDistanceSq, nearestPhotonsList);
+		if (nearestPhotonsList.empty()) return Colour(0.f, 0.f, 0.f);
 		
 		float radiusSq = maxDistanceSq;
 		if (radiusSq < EPSILON) return Colour(0.f, 0.f, 0.f);
@@ -650,7 +650,7 @@ public:
 		// Accumulate Radiance
 		Colour accumulatedRadiance(0.f, 0.f, 0.f);
 
-		for (const NearestPhoton& np : heapWorkspace) {
+		for (const NearestPhoton& np : nearestPhotonsList) {
 			int photonIdx = np.key;
 			float distSq = np.distanceSq;
 			const Photon& photon = photons[photonIdx];
@@ -669,9 +669,9 @@ public:
 		return accumulatedRadiance * invArea;
 	}
 
-	void gather(const Vec4& position, const Vec4& normal, std::vector<Photon>& outPhotons, std::vector<NearestPhoton>& heapWorkspace, int maxPhotons = 100, float maxSearchRadius = 1.f) {
+	void gather(const Vec4& position, const Vec4& normal, std::vector<Photon>& outPhotons, std::vector<NearestPhoton>& nearestPhotons, int maxPhotons = 100, float maxSearchRadius = 1.f) {
 		outPhotons.clear();
-		heapWorkspace.clear();
+		nearestPhotons.clear();
 
 		// If we don't have any photons, return an empty list
 		if (photons.empty()) return;
@@ -681,10 +681,10 @@ public:
 
 		// Do kNN-Search
 		int startIdx = 0, endIdx = (int)(photons.size());
-		searchKNN(startIdx, endIdx, maxPhotons, position, normal, maxDistanceSq, heapWorkspace);
+		searchKNN(startIdx, endIdx, maxPhotons, position, normal, maxDistanceSq, nearestPhotons);
 
 		// Transfer photons from the heap to the list
-		for (const NearestPhoton& np : heapWorkspace) {
+		for (const NearestPhoton& np : nearestPhotons) {
 			outPhotons.push_back(photons[np.key]);
 		}
 	}
@@ -692,7 +692,7 @@ public:
 // --- KD-Tree for Photon Mapping [Jensen 1995, 1996] End ---
 
 // --- Directional Grid Start ---
-template <int RESOLUTION = 32>
+template <int RESOLUTION = 8>
 class DirectionalGrid {
 private:
 	// Attributes
@@ -733,6 +733,7 @@ public:
 		// Populate the grid with photon flux
 		for (const Photon& photon : photons) {
 			Vec4 wiLocal = shadingData.frame.toLocal(photon.wi);
+			if (wiLocal.z <= EPSILON) continue;
 			int index = directionToIndex(wiLocal);
 
 			float flux = photon.flux.Lum();
@@ -745,13 +746,14 @@ public:
 			float sum = 0.f;
 			for (int i = 0; i < NUMBER_OF_CELLS; i++) {
 				// Normalize the probability in 0-1 range
+				float probability = probabilities[i] / totalFlux;
+				// Just a safeguard to avoid zero PDF...
 				probabilities[i] /= totalFlux;
 				sum += probabilities[i];
 				cdfs[i] = sum;
 			}
 			cdfs.back() = 1.f;
 		} else {
-			// Fallback to uniform distribution
 			float uniformProbability = 1.f / (float)NUMBER_OF_CELLS;
 			for (int i = 0; i < NUMBER_OF_CELLS; i++) {
 				probabilities[i] = uniformProbability;
@@ -824,6 +826,7 @@ public:
 	// Photon Mapping
 	PhotonMap globalPhotonMap;
 	PhotonMap causticPhotonMap;
+	float gatherRadius;
 
 	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas, std::string _method, int _spp) {
 		scene = _scene;
@@ -852,6 +855,13 @@ public:
 		if (renderMethod == "photon_map" || renderMethod == "path_guide_photon") {
 			std::cout << "Shooting Photons...\n";
 			shootPhotons(samplers, NUM_OF_PHOTONS_TO_SHOOT);
+			// Dynamically adjust radius here
+			// Scene Diagonal Calculate
+			gatherRadius = (scene->bounds.max - scene->bounds.min).length();
+			// 2% or 3% of diagonal is radius (in this case I picked 2.5%)
+			gatherRadius = gatherRadius * 0.025f;
+			// Clamp radius
+			// gatherRadius = std::min(std::max(0.01f, gatherRadius), 50.f);
 			std::cout << "Shooting Photons Phase Completed! Global Photon Map Size : " << globalPhotonMap.getSize()
 				<< " | Caustic Photon Map Size: " << causticPhotonMap.getSize() << std::endl;
 		}
@@ -1078,7 +1088,7 @@ public:
 	// Trace rays further OR
 	//  • Access photon map
 	//  • Compute Density estimation
-	Colour traceCameraRay(Ray& r, Sampler* sampler, std::vector<NearestPhoton>& heapWorkspace, int depth = 0, bool isFinalGatherRay = false, bool isPreviousSpecular = false) {
+	Colour traceCameraRay(Ray& r, Sampler* sampler, std::vector<NearestPhoton>& nearestPhotons, int depth = 0, bool isFinalGatherRay = false, bool isPreviousSpecular = false) {
 		if (depth >= MAX_DEPTH) return Colour(0.f, 0.f, 0.f);
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
@@ -1115,7 +1125,7 @@ public:
 
 			int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
 			Ray nextRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
-			Colour Li = traceCameraRay(nextRay, sampler, heapWorkspace, depth + 1, isFinalGatherRay, true);
+			Colour Li = traceCameraRay(nextRay, sampler, nearestPhotons, depth + 1, isFinalGatherRay, true);
 
 			float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
 			Colour indirect = (Li * fBsdf * cosTheta) / pdfBsdf;
@@ -1131,7 +1141,7 @@ public:
 		Colour direct = computeDirect(shadingData, sampler);
 
 		// Caustic Radiance via Density Estimation
-		Colour caustic = causticPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, heapWorkspace, N_PHOTONS_CAUSTIC, causticRadius);
+		Colour caustic = causticPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, nearestPhotons, N_PHOTONS_CAUSTIC, causticRadius);
 
 		// Compute Indirect Lighting for Global Photon Map
 		Colour indirect(0.f, 0.f, 0.f);
@@ -1143,14 +1153,14 @@ public:
 				// Shoot final gather ray and apply the formula as usual
 				int sign = (Dot(wiNext, shadingData.gNormal) > 0.f) ? 1 : -1;
 				Ray finalGatherRay(shadingData.x + shadingData.gNormal * sign * EPSILON, wiNext);
-				Colour Li = traceCameraRay(finalGatherRay, sampler, heapWorkspace, depth + 1, true, false);
+				Colour Li = traceCameraRay(finalGatherRay, sampler, nearestPhotons, depth + 1, true, false);
 				
 				float cosTheta = std::fabs(Dot(shadingData.sNormal, wiNext));
 				indirect = (Li * fBsdf * cosTheta) / pdfBsdf;
 			}
 		} else {
 			// Extra bounce is over, we can estimate the density radiance now at secondary hit point/s!
-			indirect = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, heapWorkspace, N_PHOTONS_GLOBAL, globalRadius);
+			indirect = globalPhotonMap.estimateRadiance(shadingData, shadingData.x, shadingData.sNormal, nearestPhotons, N_PHOTONS_GLOBAL, globalRadius);
 		}
 		// Combine results - Ld + Lg + Lc
 		Colour finalRadiance = direct + indirect + caustic;
@@ -1613,7 +1623,7 @@ public:
 	//	PDF is 0.5 X BSDF_pdf + 0.5 X Guiding_PDF
 	//	Trace
 	Colour pathTracePhotonGuidedRecursive(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler,
-		                                  std::vector<Photon>& photonWorkspace, std::vector<NearestPhoton>& heapWorkspace,
+		                                  std::vector<Photon>& gatheredPhotons, std::vector<NearestPhoton>& nearestPhotons,
 		                                  float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
@@ -1640,13 +1650,15 @@ public:
 			}
 
 			bool isPureSpecular = shadingData.bsdf->isPureSpecular();
+			bool isSmooth = shadingData.bsdf->isSmooth();
 			bool usePathGuiding = false;
-			DirectionalGrid<32> directionalGrid;
+			DirectionalGrid directionalGrid;
 
-			if (!isPureSpecular) {
-				globalPhotonMap.gather(shadingData.x, shadingData.sNormal, photonWorkspace, heapWorkspace, 100, 0.5f);
-				if (!photonWorkspace.empty()) {
-					directionalGrid.build(photonWorkspace, shadingData);
+			if (!isPureSpecular && !isSmooth) {
+				// Gather Photons with KNN Search
+				globalPhotonMap.gather(shadingData.x, shadingData.sNormal, gatheredPhotons, nearestPhotons, N_PHOTONS_GLOBAL, gatherRadius);
+				if (gatheredPhotons.size() >= (N_PHOTONS_GLOBAL * 0.5f)) {
+					directionalGrid.build(gatheredPhotons, shadingData);
 					usePathGuiding = true;
 				}
 			}
@@ -1681,34 +1693,27 @@ public:
 			Colour indirect(0.f, 0.f, 0.f);
 			Vec4 wi;
 
-			bool isSurfaceSpecular = shadingData.bsdf->isPureSpecular();
 			if (!usePathGuiding) {
 				// Standart BSDF Sampling
 				wi = shadingData.bsdf->sample(shadingData, sampler, indirect, finalPdf);
 			} else {
-				// Grid Guiding
-				// Gather Photons with KNN Search
-				if (photonWorkspace.empty()) {
-					// No photons found, do standart BSDF sampling
-					wi = shadingData.bsdf->sample(shadingData, sampler, indirect, finalPdf);
+				// Grid Guiding (50/50 MIS)
+				float pdfBsdf = 0.f;
+				float pdfGuide = 0.f;
+				if (sampler->next() < 0.5f) {
+					// Picked BSDF Sampling
+					wi = shadingData.bsdf->sample(shadingData, sampler, indirect, pdfBsdf);
+					// Still calculate guide pdf
+					Vec4 wiLocal = shadingData.frame.toLocal(wi);
+					pdfGuide = directionalGrid.pdf(wiLocal);
+					// PDF is 0.5 X BSDF_pdf + 0.5 X Guiding_PDF
+					finalPdf = (0.5f * pdfBsdf) + (0.5f * pdfGuide);
 				} else {
-					// Grid Guiding (50/50 MIS)
-					float pdfBsdf = 0.f;
-					float pdfGuide = 0.f;
-					
-					if (sampler->next() < 0.5f) {
-						// Picked BSDF Sampling
-						wi = shadingData.bsdf->sample(shadingData, sampler, indirect, pdfBsdf);
-						// Still calculate guide pdf
-						Vec4 wiLocal = shadingData.frame.toLocal(wi);
-						pdfGuide = directionalGrid.pdf(wiLocal);
-					} else {
-						// Picked Grid Sampling
-						Vec4 wiLocal = directionalGrid.sample(sampler, pdfGuide);
-						wi = shadingData.frame.toWorld(wiLocal);
-						pdfBsdf = shadingData.bsdf->PDF(shadingData, wi);
-						indirect = shadingData.bsdf->evaluate(shadingData, wi);
-					}
+					// Picked Grid Sampling
+					Vec4 wiLocal = directionalGrid.sample(sampler, pdfGuide);
+					wi = shadingData.frame.toWorld(wiLocal);
+					pdfBsdf = shadingData.bsdf->PDF(shadingData, wi);
+					indirect = shadingData.bsdf->evaluate(shadingData, wi);
 					// PDF is 0.5 X BSDF_pdf + 0.5 X Guiding_PDF
 					finalPdf = (0.5f * pdfBsdf) + (0.5f * pdfGuide);
 				}
@@ -1728,7 +1733,7 @@ public:
 			// Recurse until path terminated
 			float sign = (Dot(wi, shadingData.gNormal) >= 0.f) ? 1.f : -1.f;
 			Ray indirectRay(shadingData.x + shadingData.gNormal * (EPSILON * sign), wi);
-			return direct + pathTracePhotonGuidedRecursive(indirectRay, pathThroughput, depth + 1, sampler, photonWorkspace, heapWorkspace, finalPdf, isSurfaceSpecular);
+			return direct + pathTracePhotonGuidedRecursive(indirectRay, pathThroughput, depth + 1, sampler, gatheredPhotons, nearestPhotons, finalPdf, isPureSpecular);
 		}
 		Colour backgroundColour = scene->background->evaluate(r.dir);
 		if (depth == 0 || previousSurfaceSpecular) return pathThroughput * backgroundColour;
@@ -1746,9 +1751,9 @@ public:
 		return pathThroughput * backgroundColour * wind;
 	}
 
-	Colour pathTracePhotonGuided(Ray& r, Sampler* sampler, std::vector<Photon>& photonWorkspace, std::vector<NearestPhoton>& heapWorkspace) {
+	Colour pathTracePhotonGuided(Ray& r, Sampler* sampler, std::vector<Photon>& gatheredPhotons, std::vector<NearestPhoton>& nearestPhotons) {
 		Colour pathThroughput(1.f, 1.f, 1.f);
-		return pathTracePhotonGuidedRecursive(r, pathThroughput, 0, sampler, photonWorkspace, heapWorkspace);
+		return pathTracePhotonGuidedRecursive(r, pathThroughput, 0, sampler, gatheredPhotons, nearestPhotons);
 	}
 	// --- Path Trace Photon Guided End ---
 
@@ -2044,10 +2049,10 @@ public:
 					// FixedQuadTree quadTree;
 					ProfilerStats& currentThreadStats = perThreadStats[i];
 
-					std::vector<Photon> photonWorkspace;
-					std::vector<NearestPhoton> heapWorkspace;
-					photonWorkspace.reserve(100);
-					heapWorkspace.reserve(100);
+					std::vector<Photon> gatheredPhotons;
+					std::vector<NearestPhoton> nearestPhotons;
+					gatheredPhotons.reserve(100);
+					nearestPhotons.reserve(100);
 
 					while ((tile_id = id.fetch_add(1)) < total_tile_count) {
 						// Initialize Screen Tile
@@ -2067,7 +2072,7 @@ public:
 
 								// Photton Mapping [Jensen 1995]
 								if (renderMethod == "photon_map") {
-									col = traceCameraRay(ray, &samplers[i], heapWorkspace);
+									col = traceCameraRay(ray, &samplers[i], nearestPhotons);
 								}
 								// Our novel Path Guiding in PSS
 								else if (renderMethod == "path_guide_pss") {
@@ -2079,7 +2084,7 @@ public:
 								}
 								// Path Guiding with Photons
 								else if (renderMethod == "path_guide_photon") {
-									col = pathTracePhotonGuided(ray, &samplers[i], photonWorkspace, heapWorkspace);
+									col = pathTracePhotonGuided(ray, &samplers[i], gatheredPhotons, nearestPhotons);
 								}
 								// Unidirectional Path Trace
 								else if (renderMethod == "path_trace") {

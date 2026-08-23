@@ -1,0 +1,24 @@
+PointBVHNode[
+  -- path vertex records: 8173289
+  -- nodes: 1048575
+  -- leaf nodes: 524288
+  -- depth: 19-19 (mean 19)
+  -- size: 507.679 MB
+  -- build time: 3535.93 ms
+]
+PointBVHNode[
+  -- path vertex records: 40894369
+  -- nodes: 8388607
+  -- leaf nodes: 4194304
+  -- depth: 22-22 (mean 22)
+  -- size: 2659.99 MB
+  -- build time: 21604.3 ms
+]
+PointBVHNode[
+  -- path vertex records: 171847905
+  -- nodes: 33554431
+  -- leaf nodes: 16777216
+  -- depth: 24-24 (mean 24)
+  -- size: 11113.2 MB
+  -- build time: 102545 ms
+]

@@ -127,6 +127,7 @@ public:
 	virtual Colour evaluate(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual float PDF(const ShadingData& shadingData, const Vec4& wi) = 0;
 	virtual bool isPureSpecular() = 0;
+	virtual bool isSmooth() = 0;
 	virtual bool canLearnFresnel() = 0;
 	virtual bool isTwoSided() = 0;
 	bool isLight() { return emission.Lum() > 0.f; }
@@ -199,6 +200,7 @@ public:
 	}
 
 	bool isPureSpecular() { return false; }
+	bool isSmooth() { return false; }
 	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
@@ -252,6 +254,7 @@ public:
 	}
 
 	bool isPureSpecular() { return true; }
+	bool isSmooth() { return true; }
 	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
@@ -396,6 +399,7 @@ public:
 	}
 
 	bool isPureSpecular() { return alpha < EPSILON; }
+	bool isSmooth() { return alpha < 0.12f; }
 	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
@@ -496,6 +500,7 @@ public:
 	}
 
 	bool isPureSpecular() { return true; }
+	bool isSmooth() { return true; }
 	bool canLearnFresnel() { return true; }
 	bool isTwoSided() { return false; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
@@ -776,6 +781,7 @@ public:
 	}
 
 	bool isPureSpecular() { return alpha < EPSILON; }
+	bool isSmooth() { return alpha < 0.12f; }
 	bool canLearnFresnel() { return true; }
 	bool isTwoSided() { return false; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
@@ -867,6 +873,7 @@ public:
 	}
 
 	bool isPureSpecular() { return false; }
+	bool isSmooth() { return false; }
 	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
@@ -1037,6 +1044,7 @@ public:
 	}
 
 	bool isPureSpecular() { return false; }
+	bool isSmooth() { return false; }
 	bool canLearnFresnel() { return false; }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return albedo->sampleAlpha(shadingData.tu, shadingData.tv); }
@@ -1130,6 +1138,7 @@ public:
 	}
 
 	bool isPureSpecular() { return base->isPureSpecular(); }
+	bool isSmooth() { return base->isSmooth(); }
 	bool canLearnFresnel() { return base->canLearnFresnel(); }
 	bool isTwoSided() { return true; }
 	float mask(const ShadingData& shadingData) { return base->mask(shadingData); }
