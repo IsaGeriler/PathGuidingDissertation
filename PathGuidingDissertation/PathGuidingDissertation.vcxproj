@@ -146,7 +146,6 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="FixedQuadTree.h" />
     <ClInclude Include="Geometry.h" />
     <ClInclude Include="Imaging.h" />
     <ClInclude Include="Lights.h" />
