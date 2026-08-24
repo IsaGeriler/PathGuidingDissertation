@@ -343,7 +343,7 @@ public:
 		// u = (alphaSq / (SQ(cos(theta)) * (alphaSqMinusOne * alphaSqMinusOne) + alphaSqMinusOne)) - (1.f / alphaSqMinusOne);
 		float alphaSq = alpha * alpha;
 		float alphaSqMinusOne = (alphaSq - 1.f);
-		float cosThetaSq = wiLocal.z * wiLocal.z;
+		float cosThetaSq = wmLocal.z * wmLocal.z;
 
 		u = (1.f - cosThetaSq) / (cosThetaSq * alphaSqMinusOne + 1.f);
 		v = phi / (2 * M_PI);
@@ -972,17 +972,18 @@ public:
 		float w_diffuse = (1.f - F) * pdf_diffuse;
 		if (w_glossy + w_diffuse < EPSILON) { u = -1.f; v = -1.f; selectProbability = 0.f; }
 
-		// Retrieve phi from hLocal
-		float phi = SphericalCoordinates::sphericalPhi(hLocal);
-
 		// Invert the half vector sampling for GGX distribution
 		bool isGlossy = w_glossy > w_diffuse;
-		float cosThetaHSq = hLocal.z * hLocal.z;
+		
 		float r3 = std::max(EPSILON, std::min(sampler->next(), 0.99999f));
 
 		if (isGlossy) {
 			float alphaSq = alpha * alpha;
 			float alphaSqMinusOne = (alphaSq - 1.f);
+
+			// Retrieve phi from hLocal
+			float phi = SphericalCoordinates::sphericalPhi(hLocal);
+			float cosThetaHSq = hLocal.z * hLocal.z;
 
 			u = (1.f - cosThetaHSq) / (cosThetaHSq * alphaSqMinusOne + 1.f);
 			v = phi / (2 * M_PI);
@@ -994,7 +995,11 @@ public:
 			return;
 		}
 		// Invert the diffuse part using cosine hemisphere sampling
-		u = cosThetaHSq;
+		// Retrieve phi from wiLocal
+		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
+		float cosThetaSq = wiLocal.z * wiLocal.z;
+
+		u = cosThetaSq;
 		v = phi / (2.f * M_PI);
 
 		// Clamp u and v to [0, 1)

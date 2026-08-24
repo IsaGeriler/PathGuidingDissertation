@@ -24,7 +24,6 @@
 #include "Materials.h"
 #include "MyMath.h"
 #include "QTree.h"
-#include "FixedQuadTree.h"
 #include "Sampling.h"
 #include "Scene.h"
 
@@ -1230,7 +1229,6 @@ public:
 	};
 
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
-	// Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, FixedQuadTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
 		// --- 1. Forward Pass Phase ---
 		thread_local std::vector<ForwardPassRecord> records;
 		thread_local std::vector<const PathVertex*> nearbyVertices;
@@ -1282,10 +1280,7 @@ public:
 	void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records,
 		                       PointBVH* cache, QTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices,
 		                       HeapKNNQueue<MAX_K>& maxHeap, ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
-	// template <int MAX_K = MAX_NEARBY_VERTICES>
-	// void generatePathRecursive(Ray& r, int depth, Sampler* sampler, std::vector<ForwardPassRecord>& records,
-	//	                       PointBVH* cache, FixedQuadTree& qTree, bool isGuidingPhase, std::vector<const PathVertex*>& nearbyVertices, HeapKNNQueue<MAX_K>& maxHeap,
-	//	                       ProfilerStats& stats, float previousBsdfPdf = 0.f, bool previousSurfaceSpecular = false) {
+		// Ray Trace the Scene
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
 
@@ -2036,7 +2031,6 @@ public:
 					unsigned int tile_id = 0;
 					std::vector<PathVertex>& currentThreadPathVertexRecords = perThreadPathVertexRecords[i];
 					QTree& currentThreadQTree = perThreadQTrees[i];
-					// FixedQuadTree quadTree;
 					ProfilerStats& currentThreadStats = perThreadStats[i];
 
 					std::vector<Photon> gatheredPhotons;
