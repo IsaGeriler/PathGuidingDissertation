@@ -170,20 +170,18 @@ public:
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
 		if (wiLocal.z <= 0.f) { u = -1.f; v = -1.f; selectProbability = 0.f; return; }
 
-		// Retrieve theta and phi from wiLocal
-		float theta = SphericalCoordinates::sphericalTheta(wiLocal);
+		// Retrieve phi from wiLocal
 		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
 
 		// Invert Cosine Sample Hemisphere to find u and v
 		// theta = acos(sqrt(r1)), phi = 2 * PI * r2
-		u = SQ(cosf(theta));
+		u = wiLocal.z * wiLocal.z;
 		v = phi / (2.f * M_PI);
 
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		float r3 = sampler->next();
-		selectProbability = std::max(0.001f, std::min(r3, 0.999f));
+		selectProbability = std::max(EPSILON, std::min(sampler->next(), 0.99999f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -241,8 +239,7 @@ public:
 	void invert(const ShadingData& shadingData, Sampler* sampler, const Vec4& wi, float& u, float& v, float& selectProbability) {
 		u = 0.f;
 		v = 0.f;
-		float r3 = sampler->next();
-		selectProbability = std::max(0.001f, std::min(r3, 0.999f));
+		selectProbability = std::max(EPSILON, std::min(sampler->next(), 0.99999f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -302,7 +299,9 @@ public:
 		float r2 = sampler->next();
 		float r3 = sampler->next();
 
-		float thetaM = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
+		float cosThetaSq = (1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f);
+		float cosTheta = std::max(0.f, std::min(sqrtf(cosThetaSq), 1.f));
+		float thetaM = acosf(cosTheta);
 		float phiM = 2.f * M_PI * r2;
 
 		// Find wi from wo and wm (light reflected across microfacet model)
@@ -332,8 +331,11 @@ public:
 		// Obtain the half vector from wi and wo
 		Vec4 wmLocal = (wiLocal + woLocal).normalize();
 
-		// Get theta and phi from the half vector
-		float theta = SphericalCoordinates::sphericalTheta(wmLocal);
+		// Can only sample from visible normals
+		if (wmLocal.lengthSquare() < EPSILON) { u = -1.f; v = -1.f; selectProbability = 0.f; return; }
+		wmLocal = wmLocal.normalize();
+
+		// Get phi from the half vector
 		float phi = SphericalCoordinates::sphericalPhi(wmLocal);
 		
 		// v is the same as phi = 2 * PI * v
@@ -341,14 +343,15 @@ public:
 		// u = (alphaSq / (SQ(cos(theta)) * (alphaSqMinusOne * alphaSqMinusOne) + alphaSqMinusOne)) - (1.f / alphaSqMinusOne);
 		float alphaSq = alpha * alpha;
 		float alphaSqMinusOne = (alphaSq - 1.f);
-		u = (1.f - SQ(cos(theta))) / (SQ(cos(theta)) * alphaSqMinusOne + 1.f);
+		float cosThetaSq = wiLocal.z * wiLocal.z;
+
+		u = (1.f - cosThetaSq) / (cosThetaSq * alphaSqMinusOne + 1.f);
 		v = phi / (2 * M_PI);
 
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		float r3 = sampler->next();
-		selectProbability = std::max(0.001f, std::min(r3, 0.999f));
+		selectProbability = std::max(EPSILON, std::min(sampler->next(), 0.99999f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -486,8 +489,7 @@ public:
 		// However, we can save the Fresnel probability for the next bounce
 		u = 0.f;
 		v = 0.f;
-		float r3 = sampler->next();
-		r3 = std::max(0.001f, std::min(r3, 0.999f));
+		float r3 = std::max(EPSILON, std::min(sampler->next(), 0.99999f));
 		selectProbability = reflect ? (F * r3) : (F + ((1.f - F) * r3));
 	}
 
@@ -575,7 +577,9 @@ public:
 
 		// Sample half vector
 		float alphaSq = alpha * alpha;
-		float theta = acosf(sqrtf((1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f)));
+		float cosThetaSq = (1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f);
+		float cosTheta = std::max(0.f, std::min(sqrtf(cosThetaSq), 1.f));
+		float theta = acosf(cosTheta);
 		float phi = 2.f * M_PI * r2;
 
 		Vec4 wmLocal = SphericalCoordinates::sphericalToWorld(theta, phi);
@@ -585,7 +589,7 @@ public:
 		if (selectProbability < F) {
 			// Reflect
 			Vec4 wiLocal = -woLocal + (wmLocal * 2 * Dot(wmLocal, woLocal));
-			if (wiLocal.z * woLocal.z <= 0.f) return {};
+			if (wiLocal.z * woLocal.z <= 0.f) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 			Vec4 wi = shadingData.frame.toWorld(wiLocal);
 			reflectedColour = evaluate(shadingData, wi);
 			pdf = PDF(shadingData, wi);
@@ -615,6 +619,7 @@ public:
 
 			float cosThetaT = sqrt(std::max(1.f - sinThetaTSq, 0.f));
 			Vec4 wiLocal = -woLocal * eta + wmLocal * (eta * cosThetaI - cosThetaT);
+			if (wiLocal.lengthSquare() < EPSILON) { pdf = 0.f; reflectedColour = Colour(0.f, 0.f, 0.f); return Vec4(0.f, 0.f, 1.f); }
 			wiLocal = wiLocal.normalize();
 			Vec4 wi = shadingData.frame.toWorld(wiLocal);
 			reflectedColour = evaluate(shadingData, wi);
@@ -638,8 +643,7 @@ public:
 		bool reflect = cosThetaI * cosThetaO > 0.f;
 
 		// When alpha < EPSILON, we treated this as GlassBSDF
-		float r3 = sampler->next();
-		r3 = std::max(0.001f, std::min(r3, 0.999f));
+		float r3 = std::max(EPSILON, std::min(sampler->next(), 0.99999f));
 		if (alpha < EPSILON) {
 			float fresnel = ShadingHelper::fresnelDielectric(woLocal.z, intIOR, extIOR);
 			u = 0.f;
@@ -825,16 +829,18 @@ public:
 		// Invert Cosine Sample Hemisphere where,
 		// theta = acos(sqrt(r1)), phi = 2 * PI * r2
 		Vec4 wiLocal = shadingData.frame.toLocal(wi);
-		float theta = SphericalCoordinates::sphericalTheta(wiLocal);
+		if (wiLocal.z <= 0.f) { u = -1.f; v = -1.f; selectProbability = 0.f; return; }
+		
 		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
-		u = SQ(cosf(theta));
+		
+		// u = SQ(cosf(theta));
+		u = wiLocal.z * wiLocal.z;
 		v = phi / (2.f * M_PI);
 
 		// Clamp u and v to [0, 1)
 		u = std::max(0.f, std::min(u, 0.99999f));
 		v = std::max(0.f, std::min(v, 0.99999f));
-		float r3 = sampler->next();
-		selectProbability = std::max(0.001f, std::min(r3, 0.999f));
+		selectProbability = std::max(EPSILON, std::min(sampler->next(), 0.99999f));
 	}
 
 	Colour evaluate(const ShadingData& shadingData, const Vec4& wi) {
@@ -915,7 +921,9 @@ public:
 			// Glossy Part - Sample theta and phi from random variables for half vector
 			float alphaSq = alpha * alpha;
 			float alphaSqMinusOne = alphaSq - 1.f;
-			float theta = acosf(sqrtf((1.f - r1) / (r1 * alphaSqMinusOne + 1.f)));
+			float cosThetaSq = (1.f - r1) / (r1 * (alphaSq - 1.f) + 1.f);
+			float cosTheta = std::max(0.f, std::min(sqrtf(cosThetaSq), 1.f));
+			float theta = acosf(cosTheta);
 			float phi = 2.f * M_PI * r2;
 
 			// Converting this to GGX sampling for half vector
@@ -948,7 +956,9 @@ public:
 		Vec4 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
 		// Calculate the half vector and face it forward
-		Vec4 hLocal = (wiLocal + woLocal).normalize();
+		Vec4 hLocal = wiLocal + woLocal;
+		if (hLocal.lengthSquare() < EPSILON) { u = -1.f; v = -1.f; selectProbability = 0.f; return; }
+		hLocal = hLocal.normalize();
 		if (hLocal.z < 0.f) hLocal = -hLocal;
 
 		// Calculate PDFs and the weights to determine if we gloss or diffuse
@@ -962,19 +972,19 @@ public:
 		float w_diffuse = (1.f - F) * pdf_diffuse;
 		if (w_glossy + w_diffuse < EPSILON) { u = -1.f; v = -1.f; selectProbability = 0.f; }
 
+		// Retrieve phi from hLocal
+		float phi = SphericalCoordinates::sphericalPhi(hLocal);
+
 		// Invert the half vector sampling for GGX distribution
 		bool isGlossy = w_glossy > w_diffuse;
-		float r3 = sampler->next();
-		r3 = std::max(0.001f, std::min(r3, 0.999f));
-		if (isGlossy) {
-			// Retrieve theta and phi from hLocal
-			float theta = SphericalCoordinates::sphericalTheta(hLocal);
-			float phi = SphericalCoordinates::sphericalPhi(hLocal);
+		float cosThetaHSq = hLocal.z * hLocal.z;
+		float r3 = std::max(EPSILON, std::min(sampler->next(), 0.99999f));
 
+		if (isGlossy) {
 			float alphaSq = alpha * alpha;
 			float alphaSqMinusOne = (alphaSq - 1.f);
 
-			u = (1.f - SQ(cos(theta))) / (SQ(cos(theta)) * alphaSqMinusOne + 1.f);
+			u = (1.f - cosThetaHSq) / (cosThetaHSq * alphaSqMinusOne + 1.f);
 			v = phi / (2 * M_PI);
 
 			// Clamp u and v to [0, 1)
@@ -984,11 +994,7 @@ public:
 			return;
 		}
 		// Invert the diffuse part using cosine hemisphere sampling
-		// Retrieve theta and phi from wiLocal
-		float theta = SphericalCoordinates::sphericalTheta(wiLocal);
-		float phi = SphericalCoordinates::sphericalPhi(wiLocal);
-
-		u = SQ(cosf(theta));
+		u = cosThetaHSq;
 		v = phi / (2.f * M_PI);
 
 		// Clamp u and v to [0, 1)

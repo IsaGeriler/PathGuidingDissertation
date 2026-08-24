@@ -22,7 +22,7 @@ static void runInversionTestLoop(BSDF* testBSDF, const std::string& testName) {
 
 	// Create both uniform and guided sampler
 	MTRandom sampler;
-	GuidedPathSampler testSampler;
+	GuidedPathSampler testSampler(&sampler);
 
 	// Keep track of how many tests have we successfully passed
 	int passedTestCount = 0;
@@ -437,7 +437,7 @@ static void runTest() {
 
 int main(int argc, char* argv[]) {
 	// Run testing code first before rendering any stuff!
-	// runTest();
+	runTest();
 
 	// Note - Test on these scenes
 	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase +
@@ -450,7 +450,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/coffee";
 	//std::string sceneName = "../Scenes/cornell-box";
 	//std::string sceneName = "../Scenes/glass-of-water";
-	//std::string sceneName = "../Scenes/kitchen";
+	std::string sceneName = "../Scenes/kitchen";
 	//std::string sceneName = "../Scenes/living-room-2";
 	//std::string sceneName = "../Scenes/living-room-3";
 	//std::string sceneName = "../Scenes/staircase";
@@ -459,7 +459,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/veach-mis";
 	
 	// -- Environment Map Test Scenes --
-	std::string sceneName = "../Scenes/classroom";
+	//std::string sceneName = "../Scenes/classroom";
 	//std::string sceneName = "../Scenes/car2";
 	//std::string sceneName = "../Scenes/dining-room";
 	//std::string sceneName = "../Scenes/house";
@@ -475,11 +475,11 @@ int main(int argc, char* argv[]) {
 	// Ground Truth: 8192/16384					(should really be an absurd number to eliminate variance)
 	// Testing SPPs: 128/256/512/1024/2048/4096 (render, and compare error metrics with the groung truth)
 	//unsigned int SPP = 8192;
-	unsigned int SPP = 32;
+	unsigned int SPP = 128;
 	std::string filename = "GI.hdr";
-	//std::string method = "path_trace";
+	std::string method = "path_trace";
 	//std::string method = "photon_map";
-	std::string method = "path_guide_photon";
+	//std::string method = "path_guide_photon";
 	//std::string method = "path_guide_pss";
 	double timeLimitSeconds = -1.0;  // Seconds!
 

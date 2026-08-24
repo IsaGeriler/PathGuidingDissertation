@@ -52,7 +52,7 @@ static const int N_PHOTONS_CAUSTIC = 40;
 static const int MAX_CHILDNODE_RECORDS = 16;
 
 // Defensive Sampling & Mixture
-static const int MAX_GUIDING_DEPTH = 2;
+static const int MAX_GUIDING_DEPTH = MAX_DEPTH;
 static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
 static const int MIN_ACCEPTED_INSERTIONS = 32;  // Aim between 16-64
 static const float BSDF_FRACTION = 0.5f;
@@ -697,8 +697,6 @@ class DirectionalGrid {
 private:
 	// Attributes
 	static constexpr int NUMBER_OF_CELLS = RESOLUTION * RESOLUTION;
-	//std::vector<float> probabilities;
-	//std::vector<float> cdfs;
 	std::array<float, NUMBER_OF_CELLS> probabilities;
 	std::array<float, NUMBER_OF_CELLS> cdfs;
 
@@ -723,7 +721,7 @@ public:
 	DirectionalGrid() = default;
 
 	void build (const std::vector<Photon>& photons, const ShadingData& shadingData) {
-		// Initialize the vector attributes
+		// Initialize the array attributes
 		probabilities.fill(0.f);
 		cdfs.fill(0.f);
 
@@ -733,7 +731,6 @@ public:
 		// Populate the grid with photon flux
 		for (const Photon& photon : photons) {
 			Vec4 wiLocal = shadingData.frame.toLocal(photon.wi);
-			if (wiLocal.z <= EPSILON) continue;
 			int index = directionToIndex(wiLocal);
 
 			float flux = photon.flux.Lum();
@@ -746,8 +743,6 @@ public:
 			float sum = 0.f;
 			for (int i = 0; i < NUMBER_OF_CELLS; i++) {
 				// Normalize the probability in 0-1 range
-				float probability = probabilities[i] / totalFlux;
-				// Just a safeguard to avoid zero PDF...
 				probabilities[i] /= totalFlux;
 				sum += probabilities[i];
 				cdfs[i] = sum;
@@ -1045,7 +1040,7 @@ public:
 		// Store the Photon on Non Specular Surfaces
 		bool isSpecular = shadingData.bsdf->isPureSpecular();
 		if (depth >= 0 && !isSpecular) {
-			// To Render Photon Map Do -> if (depth > 0 && !isSpecular
+			// To Render Photon Map Do -> if (depth > 0 && !isSpecular)
 			// To Guide with Photons leave as is!
 			// Check condition to store in caustic or global photon map
 			Photon photon{ shadingData.x, shadingData.sNormal, -r.dir, flux };
@@ -1186,7 +1181,9 @@ public:
 		}
 
 		void insert(float selectProbability, float weight) {
-			if (weight <= 0.f || selectProbability < 0.f || selectProbability >= 1.f || std::isnan(selectProbability)) return;
+			if (!(weight > 0.f) || std::isnan(weight) || std::isinf(weight)) return;
+			if (selectProbability < 0.f || selectProbability >= 1.f || std::isnan(selectProbability)) return;
+			
 			// Map the PSS [0,1) of selectProbability to index
 			int index = (int)(selectProbability * NUM_OF_BINS);
 			index = std::max(0, std::min(index, NUM_OF_BINS - 1));
@@ -1199,20 +1196,13 @@ public:
 			// If weight is less or equal than zero then handle as uniform case
 			if (totalWeight <= 0.f) { outSelectProbability = r1; outPdf = 1.f; return; }
 
-			// Calculate bin probabilities
-			float binProbabilities[NUM_OF_BINS];
+			// Calculate bin probabilities, Sample CDF to pick which bin to pick
 			float uniformPerBin = uniformFraction / NUM_OF_BINS;
 			float learnedFraction = 1.f - uniformFraction;
-
-			for (int i = 0; i < NUM_OF_BINS; i++) {
-				float learnedProbability = (bins[i] / totalWeight) * learnedFraction;
-				binProbabilities[i] = learnedProbability + uniformPerBin;
-			}
-
-			// Sample CDF to pick which bin to pick
 			float accumulated = 0.f;
 			for (int i = 0; i < NUM_OF_BINS; i++) {
-				float binProbability = binProbabilities[i];
+				float learnedProbability = (bins[i] / totalWeight) * learnedFraction;
+				float binProbability = learnedProbability + +uniformPerBin;
 				if (r1 < accumulated + binProbability || i == NUM_OF_BINS - 1) {
 					r1 = (r1 - accumulated) / binProbability;
 					r1 = std::min(std::max(r1, 0.f), 0.999999f);
@@ -1466,7 +1456,7 @@ public:
 				shadingData.bsdf->invert(shadingData, sampler, wi, u, v, selectProbability);
 
 				// If not valid u, return BSDF PDF
-				if (u < 0.f || u > 1.f || v < 0.f || v > 1.f || std::isnan(u) || std::isnan(v)) return basePdf * BSDF_FRACTION;
+				if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f || std::isnan(u) || std::isnan(v)) return basePdf * BSDF_FRACTION;
 
 				// If inversion OK, return MIS combined PDF for Path Guiding
 				float qTreePdf = isGlass ? 1.f : qTree.pdf(u, v);
@@ -1512,7 +1502,7 @@ public:
 					float lobePdfIgnored = 0.f;
 					lobeSelection.sample(r3, selectProbability, lobePdfIgnored);
 
-					GuidedPathSampler dummySampler;
+					GuidedPathSampler dummySampler(sampler);
 					dummySampler.set(u_out, v_out, selectProbability);
 					wi = shadingData.bsdf->sample(shadingData, &dummySampler, fBsdf, sampledPdf);
 				} else {
@@ -1838,7 +1828,7 @@ public:
 				float v = (y + 0.5f) / SIZE;
 
 				// Create Guided Sampler for dummy bsdf
-				GuidedPathSampler dummySampler;
+				GuidedPathSampler dummySampler(sampler);
 				dummySampler.set(u, v, 0.5f);
 
 				// Sample BSDF for Defensive Sampling Test

@@ -27,9 +27,13 @@ class GuidedPathSampler : public Sampler {
 private:
 	float u, v, selectProbability;
 	int called;
+	Sampler* baseSampler;
 public:
 	// Constructor
-	GuidedPathSampler() : u(0.f), v(0.f), selectProbability(0.f), called(0) {}
+	GuidedPathSampler(Sampler* _baseSampler) {
+		u = 0.f; v = 0.f; selectProbability = 0.f; called = 0;
+		baseSampler = _baseSampler;
+	}
 
 	// Methods
 	void set(float _u, float _v, float _selectProbability) {
@@ -38,14 +42,13 @@ public:
 	}
 
 	float next() {
-		float randomNumber = 0.f;
-		if (called == 0) randomNumber = u;
-		else if (called == 1) randomNumber = v;
-		else if (called == 2) randomNumber = selectProbability;
-		else randomNumber = 0.5f;
+		// u - v - selectProbability (Fresnel)
+		if (called == 0) { called++; return u; }
+		if (called == 1) { called++; return v; }
+		if (called == 2) { called++; return selectProbability; }
 
-		called++;
-		return randomNumber;
+		// Fallback
+		called++; return baseSampler->next();
 	}
 };
 

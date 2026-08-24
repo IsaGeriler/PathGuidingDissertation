@@ -121,7 +121,7 @@ private:
 			r1 = (leftProbability > 0.f) ? (r1 / leftProbability) : 0.5f;
 		} else {
 			// Rescale r1 for the right child
-			float rightProbability = 1.f - leftProbability;
+			float rightProbability = std::max(0.f, 1.f - leftProbability);
 			r1 = (rightProbability > 0.f) ? ((r1 - leftProbability) / rightProbability) : 0.5f;
 		}
 
@@ -149,7 +149,7 @@ private:
 			r2 = (bottomProbability > 0.f) ? (r2 / bottomProbability) : 0.5f;
 		} else {
 			// Rescale r2 for the top child
-			float topProbability = 1.f - bottomProbability;
+			float topProbability = std::max(0.f, 1.f - bottomProbability);
 			r2 = (topProbability > 0.f) ? ((r2 - bottomProbability) / topProbability) : 0.5f;
 		}
 
@@ -207,14 +207,16 @@ private:
 		if (u >= midU) index += 1;
 		if (v >= midV) index += 2;
 
-		float sumWeights = 0.f;
-		for (int i = 0; i < 4; i++) {
-			if (nodePool[nodeIndex].children[i] != -1) {
-				int currentChildIndex = nodePool[nodeIndex].children[i];
-				sumWeights += nodePool[currentChildIndex].weight;
-			}
-		}
+		//float sumWeights = 0.f;
+		//for (int i = 0; i < 4; i++) {
+		//	if (nodePool[nodeIndex].children[i] != -1) {
+		//		int currentChildIndex = nodePool[nodeIndex].children[i];
+		//		sumWeights += nodePool[currentChildIndex].weight;
+		//	}
+		//}
 		// Treat as leaf node to avoid zero divisions
+		// if (sumWeights <= 0.f) return currentPdf;
+		float sumWeights = nodePool[nodeIndex].weight;
 		if (sumWeights <= 0.f) return currentPdf;
 
 		// If the child node is null OR it's weight is 0, return 0
@@ -245,7 +247,7 @@ public:
 
 	// Methods
 	void insert(float u, float v, float luminance) {
-		if (!(luminance > 0.f) || std::isnan(luminance) || std::isinf(luminance) || u < 0.f || u > 1.f || v < 0.f || v > 1.f) return;
+		if (!(luminance > 0.f) || std::isnan(luminance) || std::isinf(luminance) || u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return;
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;
@@ -269,7 +271,7 @@ public:
 
 	float pdf(float u, float v) {
 		if (nodePool[rootIndex].weight <= 0.f) return 1.f;
-		if (u < 0.f || u > 1.f || v < 0.f || v > 1.f) return 0.f;
+		if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) return 0.f;
 		QTreeBox rootBox{};
 		rootBox.minU = 0.f; rootBox.maxU = 1.0f;
 		rootBox.minV = 0.f; rootBox.maxV = 1.0f;
