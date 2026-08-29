@@ -51,7 +51,7 @@ static const int N_PHOTONS_CAUSTIC = 40;
 static const int MAX_CHILDNODE_RECORDS = 16;
 
 // Defensive Sampling & Mixture
-static const int MAX_GUIDING_DEPTH = MAX_DEPTH;
+// static const int MAX_GUIDING_DEPTH = 2;
 static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
 static const int MIN_ACCEPTED_INSERTIONS = 32;  // Aim between 16-64
 static const float BSDF_FRACTION = 0.5f;
@@ -129,7 +129,7 @@ struct HeapKNNQueue {
 	int size() const { return count; }
 	bool empty() const { return count == 0; }
 	const NearestPathVertex& top() const { return vertices[0]; }
-	void pop() { if(count > 0) std::pop_heap(vertices, vertices + count--); }
+	void pop() { if (count > 0) std::pop_heap(vertices, vertices + count); count--; }
 
 	void push(float distSq, const PathVertex* vertex, float& dynamicRadiusSq) {
 		// Fill when queue is not full
@@ -144,7 +144,7 @@ struct HeapKNNQueue {
 			std::pop_heap(vertices, vertices + MAX_K);
 			vertices[MAX_K - 1] = { distSq, vertex };
 			std::push_heap(vertices, vertices + MAX_K);
-			dynamicRadiusSq = dynamicRadiusSq = std::min(dynamicRadiusSq, vertices[0].distanceSq);
+			dynamicRadiusSq = std::min(dynamicRadiusSq, vertices[0].distanceSq);
 		}
 	}
 };
@@ -380,19 +380,8 @@ private:
 		int rightChildIndex = node.leftFirst + 1;
 
 		// We are not in the leaf, calculate left and right child distance
-		Vec4 leftClosestPoint;
-		leftClosestPoint.x = std::max(std::min(hitPosition.x, nodes[leftChildIndex].bounds.max.x), nodes[leftChildIndex].bounds.min.x);
-		leftClosestPoint.y = std::max(std::min(hitPosition.y, nodes[leftChildIndex].bounds.max.y), nodes[leftChildIndex].bounds.min.y);
-		leftClosestPoint.z = std::max(std::min(hitPosition.z, nodes[leftChildIndex].bounds.max.z), nodes[leftChildIndex].bounds.min.z);
-		// float distanceSqLeftChild = (SQ(leftClosestPoint.x - hitPosition.x) + SQ(leftClosestPoint.y - hitPosition.y) + SQ(leftClosestPoint.z - hitPosition.z));
-		float distanceSqLeftChild = (leftClosestPoint - hitPosition).lengthSquare();
-
-		Vec4 rightClosestPoint;
-		rightClosestPoint.x = std::max(std::min(hitPosition.x, nodes[rightChildIndex].bounds.max.x), nodes[rightChildIndex].bounds.min.x);
-		rightClosestPoint.y = std::max(std::min(hitPosition.y, nodes[rightChildIndex].bounds.max.y), nodes[rightChildIndex].bounds.min.y);
-		rightClosestPoint.z = std::max(std::min(hitPosition.z, nodes[rightChildIndex].bounds.max.z), nodes[rightChildIndex].bounds.min.z);
-		// float distanceSqRightChild = (SQ(rightClosestPoint.x - hitPosition.x) + SQ(rightClosestPoint.y - hitPosition.y) + SQ(rightClosestPoint.z - hitPosition.z));
-		float distanceSqRightChild = (rightClosestPoint - hitPosition).lengthSquare();
+		float distanceSqLeftChild = nodes[leftChildIndex].bounds.distanceSqToPoint(hitPosition);
+		float distanceSqRightChild = nodes[rightChildIndex].bounds.distanceSqToPoint(hitPosition);
 
 		// Branch to decide which child is the closest, and what order to traverse
 		if (distanceSqLeftChild < distanceSqRightChild) {
@@ -1171,7 +1160,7 @@ public:
 		static constexpr int NUM_OF_BINS = 8;
 		float bins[NUM_OF_BINS]{};
 		float totalWeight = 0.f;
-		float uniformFraction = 0.05f;
+		float uniformFraction = 0.15f;
 
 		// Methods
 		void clear() {
@@ -1181,7 +1170,7 @@ public:
 
 		void insert(float selectProbability, float weight) {
 			if (!(weight > 0.f) || std::isnan(weight) || std::isinf(weight)) return;
-			if (selectProbability < 0.f || selectProbability >= 1.f || std::isnan(selectProbability)) return;
+			if (selectProbability < 0.f || selectProbability > 1.f || std::isnan(selectProbability)) return;
 			
 			// Map the PSS [0,1) of selectProbability to index
 			int index = (int)(selectProbability * NUM_OF_BINS);
@@ -1201,7 +1190,7 @@ public:
 			float accumulated = 0.f;
 			for (int i = 0; i < NUM_OF_BINS; i++) {
 				float learnedProbability = (bins[i] / totalWeight) * learnedFraction;
-				float binProbability = learnedProbability + +uniformPerBin;
+				float binProbability = learnedProbability + uniformPerBin;
 				if (r1 < accumulated + binProbability || i == NUM_OF_BINS - 1) {
 					r1 = (r1 - accumulated) / binProbability;
 					r1 = std::min(std::max(r1, 0.f), 0.999999f);
@@ -1214,7 +1203,7 @@ public:
 		}
 
 		float pdf(float selectProbability) const {
-			if (selectProbability < 0.f || selectProbability >= 1.f || std::isnan(selectProbability)) return 0.f;
+			if (selectProbability < 0.f || selectProbability > 1.f || std::isnan(selectProbability)) return 0.f;
 			if (totalWeight <= 0.f) return 1.f;
 
 			// Map the PSS [0,1) of selectProbability to index
@@ -1341,9 +1330,9 @@ public:
 			// Must run Path Guiding before calculating direct lighting
 			bool usePathGuiding = false;
 			FresnelProbabilitySelect lobeSelection;
-			lobeSelection.clear();
+			// lobeSelection.clear();
 			qTree.clear();
-			if (isGuidingPhase && cache != nullptr && (!isSpecular || isGlass) && depth <= MAX_GUIDING_DEPTH) {
+			if (isGuidingPhase && cache != nullptr && (!isSpecular || isGlass) /*&& depth <= MAX_GUIDING_DEPTH*/) {
 				// We are in the Path Guiding Phase
 				// BVH will do kNN Search when retrieving nearest vertices (faster)
 				float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
@@ -1488,6 +1477,9 @@ public:
 						float r1 = sampler->next();
 						float r2 = sampler->next();
 						qTree.sample(r1, r2, u_out, v_out, treePdfIgnored);
+					} else {
+						u_out = sampler->next();
+						v_out = sampler->next();
 					}
 					// Sample lobe separately
 					float r3 = sampler->next();
@@ -1550,7 +1542,7 @@ public:
 			qTree.clear();
 
 			// Do not contribute if we have pdf anomalies
-			if (pdfCombined <= 1e-8f || std::isnan(pdfCombined) || std::isinf(pdfCombined)) {
+			if (pdfCombined <= 1e-5f || std::isnan(pdfCombined) || std::isinf(pdfCombined)) {
 				records.push_back(record);
 				return;
 			}

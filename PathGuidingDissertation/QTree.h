@@ -79,8 +79,8 @@ private:
 	void sampleRecursive(int nodeIndex, float r1, float r2, QTreeBox currentBox, int depth, float& u, float& v, float& pdf, float currentPdf) {
 		// Sample, and terminate the recursion when we are at the leaf node
 		if (depth == maxDepth) {
-			u = currentBox.minU + r1 * (currentBox.maxU - currentBox.minU);
-			v = currentBox.minV + r2 * (currentBox.maxV - currentBox.minV);
+			u = std::min(currentBox.minU + r1 * (currentBox.maxU - currentBox.minU), 0.999999f);
+			v = std::min(currentBox.minV + r2 * (currentBox.maxV - currentBox.minV), 0.999999f);
 			pdf = currentPdf;
 			return;
 		}
@@ -104,8 +104,8 @@ private:
 
 		// Safety guard, treating as leaf node to avoid zero divisions
 		if (sumWeights <= 0.f) {
-			u = currentBox.minU + r1 * (currentBox.maxU - currentBox.minU);
-			v = currentBox.minV + r2 * (currentBox.maxV - currentBox.minV);
+			u = std::min(currentBox.minU + r1 * (currentBox.maxU - currentBox.minU), 0.999999f);
+			v = std::min(currentBox.minV + r2 * (currentBox.maxV - currentBox.minV), 0.999999f);
 			pdf = currentPdf;
 			return;
 		}
@@ -132,8 +132,8 @@ private:
 
 		// Safety guard, treating as leaf node to avoid zero divisions
 		if (sumVertical <= 0.f) {
-			u = currentBox.minU + r1 * (currentBox.maxU - currentBox.minU);
-			v = currentBox.minV + r2 * (currentBox.maxV - currentBox.minV);
+			u = std::min(currentBox.minU + r1 * (currentBox.maxU - currentBox.minU), 0.999999f);
+			v = std::min(currentBox.minV + r2 * (currentBox.maxV - currentBox.minV), 0.999999f);
 			pdf = currentPdf;
 			return;
 		}
@@ -167,8 +167,8 @@ private:
 		float probability = getChildWeight(childIndex) / sumWeights;
 
 		if (childIndex == -1) {
-			u = currentBox.minU + r1 * (currentBox.maxU - currentBox.minU);
-			v = currentBox.minV + r2 * (currentBox.maxV - currentBox.minV);
+			u = std::min(currentBox.minU + r1 * (currentBox.maxU - currentBox.minU), 0.999999f);
+			v = std::min(currentBox.minV + r2 * (currentBox.maxV - currentBox.minV), 0.999999f);
 			pdf = currentPdf;
 			return;
 		}
@@ -207,16 +207,14 @@ private:
 		if (u >= midU) index += 1;
 		if (v >= midV) index += 2;
 
-		//float sumWeights = 0.f;
-		//for (int i = 0; i < 4; i++) {
-		//	if (nodePool[nodeIndex].children[i] != -1) {
-		//		int currentChildIndex = nodePool[nodeIndex].children[i];
-		//		sumWeights += nodePool[currentChildIndex].weight;
-		//	}
-		//}
+		float sumWeights = 0.f;
+		for (int i = 0; i < 4; i++) {
+			if (nodePool[nodeIndex].children[i] != -1) {
+				int currentChildIndex = nodePool[nodeIndex].children[i];
+				sumWeights += nodePool[currentChildIndex].weight;
+			}
+		}
 		// Treat as leaf node to avoid zero divisions
-		// if (sumWeights <= 0.f) return currentPdf;
-		float sumWeights = nodePool[nodeIndex].weight;
 		if (sumWeights <= 0.f) return currentPdf;
 
 		// If the child node is null OR it's weight is 0, return 0

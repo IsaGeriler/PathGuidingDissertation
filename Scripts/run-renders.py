@@ -24,8 +24,8 @@ LOG_CSV = os.path.join(OUTPUT_DIR, "render_benchmark_results.csv")
 
 # Test Scenes (Cleaner way to define them)
 SCENE_NAMES = [
-    "kitchen",
     "cornell-box",
+    "kitchen",
     "staircase",
     "classroom",
     "dining-room"
@@ -34,7 +34,7 @@ SCENE_NAMES = [
 SCENES = [os.path.join(BASE_DIR, "Scenes", name) for name in SCENE_NAMES]
 
 # Methods to compare
-METHODS = ["path_guide_photon"]
+METHODS = ["path_guide_pss"]
 # METHODS = ["path_trace", "photon_map", "path_guide_pss", "path_guide_photon"]
 
 # Sample counts for convergence testing (Equal-Sample test)

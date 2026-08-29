@@ -226,6 +226,13 @@ public:
 			   (bbox.min.y >= min.y - epsilon && bbox.max.y <= max.y + epsilon) &&
 			   (bbox.min.z >= min.z - epsilon && bbox.max.z <= max.z + epsilon);
 	}
+
+	float distanceSqToPoint(const Vec4& p) const {
+		float dx = std::max({ min.x - p.x, 0.f, p.x - max.x });
+		float dy = std::max({ min.y - p.y, 0.f, p.y - max.y });
+		float dz = std::max({ min.z - p.z, 0.f, p.z - max.z });
+		return dx * dx + dy * dy + dz * dz;
+	}
 };
 
 class Sphere {
