@@ -1,0 +1,16 @@
+timestamp,scene,method,spp,render_time_seconds,output_file
+2026-08-30 00:18:23,cornell-box,path_guide_pss,32,365.817,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\cornell-box_path_guide_pss_32spp.hdr
+2026-08-30 00:44:06,cornell-box,path_guide_pss,128,1543.833,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\cornell-box_path_guide_pss_128spp.hdr
+2026-08-30 02:28:47,cornell-box,path_guide_pss,512,6280.083,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\cornell-box_path_guide_pss_512spp.hdr
+2026-08-30 02:33:48,kitchen,path_guide_pss,32,301.332,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\kitchen_path_guide_pss_32spp.hdr
+2026-08-30 02:53:57,kitchen,path_guide_pss,128,1209.494,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\kitchen_path_guide_pss_128spp.hdr
+2026-08-30 04:16:22,kitchen,path_guide_pss,512,4945.069,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\kitchen_path_guide_pss_512spp.hdr
+2026-08-30 04:20:01,staircase,path_guide_pss,32,218.301,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\staircase_path_guide_pss_32spp.hdr
+2026-08-30 04:34:30,staircase,path_guide_pss,128,869.628,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\staircase_path_guide_pss_128spp.hdr
+2026-08-30 05:34:05,staircase,path_guide_pss,512,3574.236,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\staircase_path_guide_pss_512spp.hdr
+2026-08-30 05:39:45,classroom,path_guide_pss,32,340.128,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\classroom_path_guide_pss_32spp.hdr
+2026-08-30 06:03:30,classroom,path_guide_pss,128,1425.37,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\classroom_path_guide_pss_128spp.hdr
+2026-08-30 07:43:39,classroom,path_guide_pss,512,6009.07,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\classroom_path_guide_pss_512spp.hdr
+2026-08-30 07:48:30,dining-room,path_guide_pss,32,290.831,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\dining-room_path_guide_pss_32spp.hdr
+2026-08-30 08:08:35,dining-room,path_guide_pss,128,1205.337,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\dining-room_path_guide_pss_128spp.hdr
+2026-08-30 09:31:59,dining-room,path_guide_pss,512,5003.951,C:\dev\VisualStudio\PathGuidingDissertation\Images\PathTraceVsPathGuide\dining-room_path_guide_pss_512spp.hdr

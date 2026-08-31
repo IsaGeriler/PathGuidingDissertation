@@ -30,14 +30,12 @@
 #include "ThirdParty/GamesEngineering/GamesEngineeringBase.h"
 
 // --- Constants for Path Guiding Algortihm ---
-#define DEBUG_GUIDED_PATH false
+#define DEBUG_GUIDED_PATH true
 #define DEBUG_BVH true
+#define ENABLE_GUIDING_PROFILING true
 
 // Enable NEE or not for Incoming Radiance (Li)
 constexpr bool enableNEE = true;
-
-// Is PointBVH built?
-static bool isPointBVHBuilt = false;
 
 // Max Bounces
 static const int MAX_DEPTH = 8;
@@ -55,7 +53,8 @@ static const int MAX_CHILDNODE_RECORDS = 16;
 static const int MAX_NEARBY_VERTICES = 200;     // Aim between 200-800
 static const int MIN_ACCEPTED_INSERTIONS = 32;  // Aim between 16-64
 static const float BSDF_FRACTION = 0.5f;
-static const float QTREE_FRACTION = 0.5f;
+static const float QTREE_FRACTION = 1.f - BSDF_FRACTION;
+static const float MIN_GUIDING_NORMAL_ALIGNMENT = 0.1f;
 // --- Constants for Path Guiding Algortihm End ---
 
 struct ScreenTile {
@@ -129,7 +128,7 @@ struct HeapKNNQueue {
 	int size() const { return count; }
 	bool empty() const { return count == 0; }
 	const NearestPathVertex& top() const { return vertices[0]; }
-	void pop() { if (count > 0) std::pop_heap(vertices, vertices + count); count--; }
+	void pop() { if (count <= 0) return; std::pop_heap(vertices, vertices + count); count--; }
 
 	void push(float distSq, const PathVertex* vertex, float& dynamicRadiusSq) {
 		// Fill when queue is not full
@@ -204,7 +203,7 @@ private:
 			nodes[nodeIdx].bounds.extend(pathVertices[first + i].position);
 		}
 	}
-	
+
 	void subdivide(int nodeIdx) {
 		// Return if the used node count exceeds max child node count
 		if (nodes[nodeIdx].used <= MAX_CHILDNODE_RECORDS) return;
@@ -221,9 +220,9 @@ private:
 		auto first = pathVertices.begin() + nodes[nodeIdx].leftFirst;
 		auto nth = pathVertices.begin() + nodes[nodeIdx].leftFirst + nodes[nodeIdx].used / 2;
 		auto last = pathVertices.begin() + nodes[nodeIdx].leftFirst + nodes[nodeIdx].used;
-		
+
 		// From those indexes, sort elements via a comparator
-		std::nth_element(first, nth, last, 
+		std::nth_element(first, nth, last,
 			// Lambda function as a comparator, capture the split axis by value
 			// Unlike scene triangle BVH we do not use centroids
 			// Instead, we compare the values of corresponding axis value of position vectors
@@ -274,7 +273,7 @@ private:
 			assert(node.used <= MAX_CHILDNODE_RECORDS && "Leaf carries records over capacity");
 			// Check if the record positions are inside the bounding box or not
 			for (int first = node.leftFirst, i = 0; i < node.used; i++) {
-				assert(node.bounds.containsPoint(pathVertices[i].position, EPSILON) && "Record outside of its leaf's bounding box.");
+				assert(node.bounds.containsPoint(pathVertices[first + i].position, EPSILON) && "Record outside of its leaf's bounding box.");
 			}
 			return node.used;
 		}
@@ -344,7 +343,7 @@ private:
 		// Get left and right child indexes
 		int leftChildIndex = node.leftFirst;
 		int rightChildIndex = node.leftFirst + 1;
-		
+
 		// Recurse
 		radiusSearchNode(leftChildIndex, hitPosition, radiusSq, nearbyVertices);
 		radiusSearchNode(rightChildIndex, hitPosition, radiusSq, nearbyVertices);
@@ -401,8 +400,13 @@ private:
 public:
 	// Public Methods
 	void build(std::vector<PathVertex>&& inputPathVertices, std::string sceneName) {
-		// Handle degenerate case where the passed vector is empty
-		if (inputPathVertices.empty()) return;
+		// Empty input invalidates any previously built tree.
+		if (inputPathVertices.empty()) {
+			nodes.clear();
+			pathVertices.clear();
+			buildTime = 0.0;
+			return;
+		}
 		pathVertices = std::move(inputPathVertices);
 
 		nodes.clear();
@@ -447,7 +451,7 @@ public:
 		bvhStats.buildTimeMs = buildTime;
 
 		// Calculate safely to prevent divide-by-zero errors
-		double meanDepth = (bvhStats.leafNodeCount > 0) ? (double)bvhStats.sumLeafDepth / (double)bvhStats.leafNodeCount: 0.0;
+		double meanDepth = (bvhStats.leafNodeCount > 0) ? (double)bvhStats.sumLeafDepth / (double)bvhStats.leafNodeCount : 0.0;
 		double sizeMB = bvhStats.memoryInBytes / SQ(1024.0);
 
 		// 1. Build the output string
@@ -473,8 +477,6 @@ public:
 		} else {
 			std::cerr << "Warning: Could not open bvh_build_log.txt for writing.\n";
 		}
-
-		// ---------------------------------------------------------
 		// Save to CSV
 		std::string csvFilename = sceneName + "bvh_build_data.csv";
 		std::ofstream csvFile(csvFilename, std::ios::app);
@@ -497,8 +499,6 @@ public:
 
 			csvFile.close();
 		}
-		// ---------------------------------------------------------
-
 		return bvhStats;
 	}
 
@@ -514,6 +514,7 @@ public:
 	template <int MAX_K>
 	void kNNSearch(const Vec4& hitPosition, float& dynamicRadiusSq, HeapKNNQueue<MAX_K>& maxHeap) {
 		// Start the kNN search from the root
+		maxHeap.clear();
 		if (nodes.empty()) return;
 		int rootIdx = 0;
 		// kNNSearchNode(rootIdx, hitPosition, dynamicRadiusSq, maxHeap, k);
@@ -571,7 +572,7 @@ private:
 			if (distanceSq < maxDistanceSq) {
 				// Push in the max heap
 				nearestPhotons.push_back({ distanceSq, midIdx });
-				
+
 				// Re-sort the vector into a max-heap
 				std::push_heap(nearestPhotons.begin(), nearestPhotons.end());
 
@@ -585,7 +586,7 @@ private:
 		}
 		// Which side of the plane to split?
 		float axisDistance = targetPosition[photon.key] - photon.position[photon.key];
-		
+
 		// Left and right childs
 		int leftStartIdx = startIdx, leftEndIdx = midIdx;
 		int rightStartIdx = midIdx + 1, rightEndIdx = endIdx;
@@ -631,7 +632,7 @@ public:
 		int startIdx = 0, endIdx = (int)(photons.size());
 		searchKNN(startIdx, endIdx, maxPhotons, position, normal, maxDistanceSq, nearestPhotonsList);
 		if (nearestPhotonsList.empty()) return Colour(0.f, 0.f, 0.f);
-		
+
 		float radiusSq = maxDistanceSq;
 		if (radiusSq < EPSILON) return Colour(0.f, 0.f, 0.f);
 
@@ -708,7 +709,7 @@ public:
 	// Build the grid and cache the CDFs (Cumulative Distribution Function)
 	DirectionalGrid() = default;
 
-	void build (const std::vector<Photon>& photons, const ShadingData& shadingData) {
+	bool build(const std::vector<Photon>& photons, const ShadingData& shadingData) {
 		// Initialize the array attributes
 		probabilities.fill(0.f);
 		cdfs.fill(0.f);
@@ -722,12 +723,13 @@ public:
 			int index = directionToIndex(wiLocal);
 
 			float flux = photon.flux.Lum();
+			if (!(flux > 0.f) || !std::isfinite(flux)) continue;
 			probabilities[index] += flux;
 			totalFlux += flux;
 		}
 
 		// Normalise probabilities and build the CDFs
-		if (totalFlux > EPSILON) {
+		if (totalFlux > 0.f && std::isfinite(totalFlux)) {
 			float sum = 0.f;
 			for (int i = 0; i < NUMBER_OF_CELLS; i++) {
 				// Normalize the probability in 0-1 range
@@ -736,12 +738,9 @@ public:
 				cdfs[i] = sum;
 			}
 			cdfs.back() = 1.f;
+			return true;
 		} else {
-			float uniformProbability = 1.f / (float)NUMBER_OF_CELLS;
-			for (int i = 0; i < NUMBER_OF_CELLS; i++) {
-				probabilities[i] = uniformProbability;
-				cdfs[i] = (float)(i + 1) / (float)NUMBER_OF_CELLS;
-			}
+			return false;
 		}
 	}
 
@@ -784,24 +783,25 @@ public:
 
 class RayTracer {
 public:
-	Scene* scene;
-	GamesEngineeringBase::Window* canvas;
-	Film* film;
-	MTRandom* samplers;
-	std::thread** threads;
-	unsigned int numProcs;
+	Scene* scene = nullptr;
+	GamesEngineeringBase::Window* canvas = nullptr;
+	Film* film = nullptr;
+	MTRandom* samplers = nullptr;
+	std::thread** threads = nullptr;
+	unsigned int numProcs = 0;
 	std::string renderMethod = "path_trace";
 	std::string sceneName;
 
 	// Cached vertices will be stored in a BVH structure
-	PointBVH* cacheBVH;
+	PointBVH* cacheBVH = nullptr;
+	bool isPointBVHBuilt = false;
 	std::vector<PathVertex> globalCacheList;
 	int maxSPP;
 	int learningThreshold;
 
 	// Path Vertex vector to then cache saved items over at a Spatial Accelleration Structure
 	std::vector<std::vector<PathVertex>> perThreadPathVertexRecords;
-	QTree* perThreadQTrees;
+	QTree* perThreadQTrees = nullptr;
 
 	// Stats for Profiling
 	std::vector<ProfilerStats> perThreadStats;
@@ -811,6 +811,26 @@ public:
 	PhotonMap causticPhotonMap;
 	float gatherRadius;
 
+	RayTracer() = default;
+	RayTracer(const RayTracer&) = delete;
+	RayTracer& operator=(const RayTracer&) = delete;
+
+	~RayTracer() {
+		if (threads != nullptr) {
+			for (unsigned int i = 0; i < numProcs; ++i) {
+				if (threads[i] == nullptr) continue;
+				if (threads[i]->joinable()) threads[i]->join();
+				delete threads[i];
+				threads[i] = nullptr;
+			}
+		}
+		delete cacheBVH;
+		delete[] perThreadQTrees;
+		delete[] samplers;
+		delete[] threads;
+		delete film;
+	}
+
 	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas, std::string _method, int _spp) {
 		scene = _scene;
 		canvas = _canvas;
@@ -819,17 +839,14 @@ public:
 		SYSTEM_INFO sysInfo;
 		GetSystemInfo(&sysInfo);
 		numProcs = sysInfo.dwNumberOfProcessors;
-		threads = new std::thread*[numProcs];
+		threads = new std::thread * [numProcs] {};
 		samplers = new MTRandom[numProcs];
 		perThreadQTrees = new QTree[numProcs];
 		perThreadPathVertexRecords.resize(numProcs);
 		perThreadStats.resize(numProcs);
-
-		cacheBVH = nullptr;
 		renderMethod = _method;
 		maxSPP = _spp;
-		learningThreshold = maxSPP / 8;
-
+		learningThreshold = std::max(1, maxSPP / 8);
 		clear();
 
 		// Assuming our scene is ready to go
@@ -838,20 +855,26 @@ public:
 		if (renderMethod == "photon_map" || renderMethod == "path_guide_photon") {
 			std::cout << "Shooting Photons...\n";
 			shootPhotons(samplers, NUM_OF_PHOTONS_TO_SHOOT);
-			// Dynamically adjust radius here
-			// Scene Diagonal Calculate
+			// Dynamically adjust radius here - Scene Diagonal Calculation
 			gatherRadius = (scene->bounds.max - scene->bounds.min).length();
 			// 2% or 3% of diagonal is radius (in this case I picked 2.5%)
 			gatherRadius = gatherRadius * 0.025f;
-			// Clamp radius
-			// gatherRadius = std::min(std::max(0.01f, gatherRadius), 50.f);
 			std::cout << "Shooting Photons Phase Completed! Global Photon Map Size : " << globalPhotonMap.getSize()
-				<< " | Caustic Photon Map Size: " << causticPhotonMap.getSize() << std::endl;
+					  << " | Caustic Photon Map Size: " << causticPhotonMap.getSize() << std::endl;
 		}
 	}
 
 	void clear() {
-		film->clear();
+		if (film != nullptr) film->clear();
+		delete cacheBVH;
+		cacheBVH = nullptr;
+		isPointBVHBuilt = false;
+		globalCacheList.clear();
+		for (auto& records : perThreadPathVertexRecords) records.clear();
+		for (unsigned int i = 0; i < numProcs; ++i) {
+			if (perThreadQTrees != nullptr) perThreadQTrees[i].clear();
+			if (i < perThreadStats.size()) perThreadStats[i] = ProfilerStats();
+		}
 	}
 
 	Colour computeDirect(const ShadingData& shadingData, Sampler* sampler, const std::function<float(const Vec4&)>& pdfFunction = nullptr) {
@@ -1169,9 +1192,9 @@ public:
 		}
 
 		void insert(float selectProbability, float weight) {
-			if (!(weight > 0.f) || std::isnan(weight) || std::isinf(weight)) return;
-			if (selectProbability < 0.f || selectProbability > 1.f || std::isnan(selectProbability)) return;
-			
+			if (!(weight > 0.f) || !std::isfinite(weight)) return;
+			if (selectProbability < 0.f || selectProbability >= 1.f || !std::isfinite(selectProbability)) return;
+
 			// Map the PSS [0,1) of selectProbability to index
 			int index = (int)(selectProbability * NUM_OF_BINS);
 			index = std::max(0, std::min(index, NUM_OF_BINS - 1));
@@ -1180,7 +1203,25 @@ public:
 			totalWeight += weight;
 		}
 
+		bool insertInterval(float begin, float end, float weight) {
+			if (!(weight > 0.f) || !std::isfinite(weight) || !std::isfinite(begin) || !std::isfinite(end)) return false;
+			begin = std::clamp(begin, 0.f, 1.f);
+			end = std::clamp(end, 0.f, 1.f);
+			const float intervalLength = end - begin;
+			if (!(intervalLength > 0.f)) return false;
+
+			for (int i = 0; i < NUM_OF_BINS; ++i) {
+				const float binBegin = static_cast<float>(i) / NUM_OF_BINS;
+				const float binEnd = static_cast<float>(i + 1) / NUM_OF_BINS;
+				const float overlap = std::max(0.f, std::min(end, binEnd) - std::max(begin, binBegin));
+				if (overlap > 0.f) bins[i] += weight * (overlap / intervalLength);
+			}
+			totalWeight += weight;
+			return true;
+		}
+
 		void sample(float r1, float& outSelectProbability, float& outPdf) const {
+			r1 = std::clamp(r1, 0.f, std::nextafter(1.f, 0.f));
 			// If weight is less or equal than zero then handle as uniform case
 			if (totalWeight <= 0.f) { outSelectProbability = r1; outPdf = 1.f; return; }
 
@@ -1193,7 +1234,7 @@ public:
 				float binProbability = learnedProbability + uniformPerBin;
 				if (r1 < accumulated + binProbability || i == NUM_OF_BINS - 1) {
 					r1 = (r1 - accumulated) / binProbability;
-					r1 = std::min(std::max(r1, 0.f), 0.999999f);
+					r1 = std::clamp(r1, 0.f, std::nextafter(1.f, 0.f));
 					outSelectProbability = (i + r1) / (float)NUM_OF_BINS;
 					outPdf = binProbability * NUM_OF_BINS;
 					return;
@@ -1203,7 +1244,7 @@ public:
 		}
 
 		float pdf(float selectProbability) const {
-			if (selectProbability < 0.f || selectProbability > 1.f || std::isnan(selectProbability)) return 0.f;
+			if (selectProbability < 0.f || selectProbability >= 1.f || !std::isfinite(selectProbability)) return 0.f;
 			if (totalWeight <= 0.f) return 1.f;
 
 			// Map the PSS [0,1) of selectProbability to index
@@ -1215,6 +1256,27 @@ public:
 			float learnedProbability = (bins[index] / totalWeight) * learnedFraction;
 			return (learnedProbability + uniformPerBin) * NUM_OF_BINS;
 		}
+
+		float probabilityMass(float begin, float end) const {
+			if (!std::isfinite(begin) || !std::isfinite(end)) return 0.f;
+			begin = std::clamp(begin, 0.f, 1.f);
+			end = std::clamp(end, 0.f, 1.f);
+			if (end <= begin) return 0.f;
+			if (totalWeight <= 0.f) return end - begin;
+
+			const float uniformPerBin = uniformFraction / NUM_OF_BINS;
+			const float learnedFraction = 1.f - uniformFraction;
+			float mass = 0.f;
+			for (int i = 0; i < NUM_OF_BINS; ++i) {
+				const float binBegin = static_cast<float>(i) / NUM_OF_BINS;
+				const float binEnd = static_cast<float>(i + 1) / NUM_OF_BINS;
+				const float overlap = std::max(0.f, std::min(end, binEnd) - std::max(begin, binBegin));
+				if (overlap <= 0.f) continue;
+				const float binProbability = (bins[i] / totalWeight) * learnedFraction + uniformPerBin;
+				mass += overlap * binProbability * NUM_OF_BINS;
+			}
+			return std::clamp(mass, 0.f, 1.f);
+		}
 	};
 
 	Colour guidedPath(Ray& r, Sampler* sampler, std::vector<PathVertex>& pathVertices, PointBVH* sTree, QTree& dTree, bool isGuidingPhase, ProfilerStats& stats, bool enableNEE) {
@@ -1225,7 +1287,7 @@ public:
 		thread_local HeapKNNQueue<MAX_NEARBY_VERTICES> maxHeap;
 		// records.reserve(10);                          // Max depth: 8, + 2 buffer space
 		// nearbyVertices.reserve(MAX_NEARBY_VERTICES);  // Pre-allocate max number of wanted vertices
-		
+
 		// Clear these vectors and the max heap from the previous bounce just in case
 		records.clear();
 		nearbyVertices.clear();
@@ -1316,7 +1378,8 @@ public:
 
 			// Store if the current surface is specular
 			bool isSpecular = shadingData.bsdf->isPureSpecular();
-			bool isGlass = shadingData.bsdf->canLearnFresnel();
+			bool usesSelectorGuide = shadingData.bsdf->canLearnFresnel();
+			bool supportsPSSGuide = shadingData.bsdf->supportsPSSGuiding();
 
 			// Why have I applied RRP at the last depth...
 			// Terminate when the ray depth exceeds 8 bounces, to avoid infinite recursion
@@ -1330,9 +1393,8 @@ public:
 			// Must run Path Guiding before calculating direct lighting
 			bool usePathGuiding = false;
 			FresnelProbabilitySelect lobeSelection;
-			// lobeSelection.clear();
 			qTree.clear();
-			if (isGuidingPhase && cache != nullptr && (!isSpecular || isGlass) /*&& depth <= MAX_GUIDING_DEPTH*/) {
+			if (isGuidingPhase && cache != nullptr && supportsPSSGuide && (!isSpecular || usesSelectorGuide)) {
 				// We are in the Path Guiding Phase
 				// BVH will do kNN Search when retrieving nearest vertices (faster)
 				float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
@@ -1347,14 +1409,11 @@ public:
 					cache->kNNSearch(shadingData.x, maxRadiusSq, maxHeap);
 				}
 
-				float maxRadiusSqFound = 0.f;
 				while (!maxHeap.empty()) {
 					const PathVertex* poppedVertex = maxHeap.top().vertex;
-					maxRadiusSqFound = std::max(maxHeap.top().distanceSq, maxRadiusSqFound);
 					nearbyVertices.push_back(poppedVertex);
 					maxHeap.pop();
 				}
-				float radiusSq = std::max(maxRadiusSqFound, EPSILON);
 
 				// BVH will do radius based search when retrieving nearest vertices (slower)
 				// float sceneDiagonal = (scene->bounds.max - scene->bounds.min).length();
@@ -1378,18 +1437,18 @@ public:
 
 				// Debugging
 				#if DEBUG_GUIDED_PATH
-					thread_local int debugSearchCount = 0;
-					thread_local int debugTotalVertexCount = 0;
+				thread_local int debugSearchCount = 0;
+				thread_local int debugTotalVertexCount = 0;
 
-					debugSearchCount++;
-					debugTotalVertexCount += nearbyVertices.size();
+				debugSearchCount++;
+				debugTotalVertexCount += nearbyVertices.size();
 
-					if (debugSearchCount == 10000) {
-						int average = debugTotalVertexCount / 10000;
-						printf("Thread Debug: Avg. Vertices Found Per Bounce: %d\n", average);
-						debugSearchCount = 0;
-						debugTotalVertexCount = 0;
-					}
+				if (debugSearchCount == 10000) {
+					int average = debugTotalVertexCount / 10000;
+					printf("Thread Debug: Avg. Vertices Found Per Bounce: %d\n", average);
+					debugSearchCount = 0;
+					debugTotalVertexCount = 0;
+				}
 				#endif
 				// Debugging End
 
@@ -1399,54 +1458,85 @@ public:
 					Timer qTreeBuildTimer(stats.qTreeBuildTimeMs);
 					for (const auto* vertex : nearbyVertices) {
 						if (vertex == nullptr) continue;
+						if (Dot(shadingData.sNormal, vertex->normal) < MIN_GUIDING_NORMAL_ALIGNMENT) continue;
 
 						float cosTheta = Dot(shadingData.sNormal, vertex->wi);
 						if (std::fabs(cosTheta) < EPSILON) continue;
-						
+
 						float weight = std::sqrt(std::max(0.f, vertex->Li.Lum()));
 						if (weight < EPSILON) continue;
 
-						// BSDF inversion to get u, v, and selectProbability
-						float u, v, selectProbability;
-						// BSDF Inversion will be timed inside this scope
-						{
-							Timer bsdfInvertTimer(stats.bsdfInvertTimeMs);
-							shadingData.bsdf->invert(shadingData, sampler, vertex->wi, u, v, selectProbability);
+						bool isValid = true;
+
+						// 1. Selector Guiding (Fresnel)
+						if (usesSelectorGuide) {
+							float begin = 0.f, end = 0.f;
+							if (!shadingData.bsdf->selectorInterval(shadingData, vertex->wi, begin, end) || !lobeSelection.insertInterval(begin, end, weight)) {
+								isValid = false;
+							}
 						}
-						// Timing completed
-						if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f || std::isnan(u) || std::isnan(v)) continue;
 
-						// Learn the lobe choice here
-						lobeSelection.insert(selectProbability, weight);
+						// 2. Spatial Guiding (QTree) - ONLY if the surface is NOT a perfect mirror/glass
+						if (!isSpecular) {
+							float u = 0.f, v = 0.f, ignoredSelector = 0.f;
+							{
+								Timer bsdfInvertTimer(stats.bsdfInvertTimeMs);
+								shadingData.bsdf->invert(shadingData, vertex->wi, u, v, ignoredSelector);
+							}
+							if (u >= 0.f && u < 1.f && v >= 0.f && v < 1.f && std::isfinite(u) && std::isfinite(v)) {
+								qTree.insert(u, v, weight);
+							}
+							else {
+								isValid = false;
+							}
+						}
 
-						// Insert into the QTree
-						if (!isGlass) qTree.insert(u, v, weight);
+						if (!isValid) continue;
 						acceptedVertices++;
 					}
 				}
 				// Timing completed
-				usePathGuiding = (acceptedVertices >= MIN_ACCEPTED_INSERTIONS) && (lobeSelection.totalWeight > 0.f);
+				usePathGuiding = acceptedVertices >= MIN_ACCEPTED_INSERTIONS && (!usesSelectorGuide || lobeSelection.totalWeight > 0.f);
 				if (usePathGuiding) stats.guidedPathBounceCount++;
 			}
 
 			// Lambda Function - Returns PDF of the BSDF
-			auto forwardPdf = [&](const Vec4& wi) -> float {
-				// If not path guiding, return the BSDFs PDF
-				float basePdf = shadingData.bsdf->PDF(shadingData, wi);
+			auto forwardPdf = [&](const Vec4& wi, float basePdf) -> float {
 				if (!usePathGuiding) return basePdf;
 
-				// Sample the new pdf via BSDF inversion
-				float u, v, selectProbability;
-				shadingData.bsdf->invert(shadingData, sampler, wi, u, v, selectProbability);
+				float spatialPdf = 1.f;
+				// Only evaluate the QTree PDF if the material is not perfectly specular
+				if (!isSpecular) {
+					float u = 0.f, v = 0.f, ignoredSelector = 0.f;
+					shadingData.bsdf->invert(shadingData, wi, u, v, ignoredSelector);
+					if (u >= 0.f && u < 1.f && v >= 0.f && v < 1.f && std::isfinite(u) && std::isfinite(v)) {
+						spatialPdf = qTree.pdf(u, v);
+					}
+					else {
+						spatialPdf = 0.f; // 0 probability if inversion fails spatially
+					}
+				}
 
-				// If not valid u, return BSDF PDF
-				if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f || std::isnan(u) || std::isnan(v)) return basePdf * BSDF_FRACTION;
+				if (usesSelectorGuide) {
+					float begin = 0.f, end = 0.f;
+					if (!shadingData.bsdf->selectorInterval(shadingData, wi, begin, end)) {
+						return basePdf * BSDF_FRACTION;
+					}
+					const float baseEventMass = end - begin;
+					if (!(baseEventMass > 0.f)) return basePdf * BSDF_FRACTION;
 
-				// If inversion OK, return MIS combined PDF for Path Guiding
-				float qTreePdf = isGlass ? 1.f : qTree.pdf(u, v);
-				float lobePdf = lobeSelection.pdf(selectProbability);
-				return basePdf * (BSDF_FRACTION + QTREE_FRACTION * (qTreePdf * lobePdf));
+					const float guidedEventMass = lobeSelection.probabilityMass(begin, end);
+					const float conditionalPdf = basePdf / baseEventMass;
+
+					// If isSpecular = true, spatialPdf safely multiplies by 1.f
+					return BSDF_FRACTION * basePdf + QTREE_FRACTION * conditionalPdf * guidedEventMass * spatialPdf;
+				}
+				return basePdf * (BSDF_FRACTION + QTREE_FRACTION * spatialPdf);
 			};
+
+			record.directLighting = computeDirect(shadingData, sampler, [&](const Vec4& wi) {
+				return forwardPdf(wi, shadingData.bsdf->PDF(shadingData, wi));
+			});
 
 			// Save the direct lighting (NEE) to the record
 			record.directLighting = computeDirect(shadingData, sampler, forwardPdf);
@@ -1467,82 +1557,51 @@ public:
 			Vec4 wi;
 
 			if (usePathGuiding) {
-				// Pick a stragety to either guide the sampling or standard BSDF sampling
 				float strategy = sampler->next();
 				float sampledPdf = 0.f;
+
 				if (strategy < QTREE_FRACTION) {
 					float u_out = 0.f, v_out = 0.f, treePdfIgnored = 0.f;
-					// Do Guided Sampling
-					if (!isGlass) {
+
+					// 1. Spatial QTree 
+					if (!isSpecular) {
 						float r1 = sampler->next();
 						float r2 = sampler->next();
 						qTree.sample(r1, r2, u_out, v_out, treePdfIgnored);
-					} else {
+					}
+					else {
+						// Consume RNG to maintain alignment if specular
 						u_out = sampler->next();
 						v_out = sampler->next();
 					}
-					// Sample lobe separately
-					float r3 = sampler->next();
-					
-					// Then do BSDF sampling with the new numbers obtained
-					float selectProbability = 0.f;
-					float lobePdfIgnored = 0.f;
-					lobeSelection.sample(r3, selectProbability, lobePdfIgnored);
+
+					// 2. Selector Guide
+					float selectProbability = sampler->next();
+					if (usesSelectorGuide) {
+						float lobePdfIgnored = 0.f;
+						lobeSelection.sample(selectProbability, selectProbability, lobePdfIgnored);
+					}
 
 					GuidedPathSampler dummySampler(sampler);
 					dummySampler.set(u_out, v_out, selectProbability);
 					wi = shadingData.bsdf->sample(shadingData, &dummySampler, fBsdf, sampledPdf);
-				} else {
-					// Do Standart Sampling
-					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, sampledPdf);
-				}
-				if (isGlass) {
-					float u, v, selectionProbability;
-					shadingData.bsdf->invert(shadingData, sampler, wi, u, v, selectionProbability);
-					float lobePdf = lobeSelection.pdf(selectionProbability);
-					// Defensive Sampling - MIS Mixture PDF
-					pdfCombined = sampledPdf * (BSDF_FRACTION + QTREE_FRACTION * lobePdf);
 				}
 				else {
-					// Defensive Sampling - MIS Mixture PDF
-					pdfCombined = forwardPdf(wi);
+					wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, sampledPdf);
 				}
-			} else {
+
+				pdfCombined = forwardPdf(wi, sampledPdf);
+
+			}
+			else {
 				wi = shadingData.bsdf->sample(shadingData, sampler, fBsdf, pdfCombined);
 			}
-
-			// Debugging
-			#if DEBUG_GUIDED_PATH
-				// If this is the FIRST bounce (depth == 0) and we are guiding
-				if (depth == 0 && usePathGuiding) {
-					// Invert debug sample
-					float uDebug = 0.f, vDebug = 0.f, lobeDebug = 0.f;
-					shadingData.bsdf->invert(shadingData, sampler, wi, uDebug, vDebug, lobeDebug);
-					float qDebug = (uDebug >= 0.f) ? qTree.pdf(uDebug, vDebug) : 0.f;
-				
-					// Scale for visibility
-					float debugColor = std::min(qDebug * 0.1f, 1.0f); 
-
-					// Modify the record to output QTree debug colours
-					record.emission = Colour(debugColor, debugColor, debugColor);
-					record.misEmission = record.emission;
-					record.directLighting = Colour(0.f, 0.f, 0.f);
-					record.bsdfWeight = Colour(0.f, 0.f, 0.f);
-					record.storeRecord = false;
-					records.push_back(record);
-					qTree.clear();
-
-					// We just want to see the QTree value here.
-					return;
-				}
-			#endif
-			// Debugging End
 
 			// Clear the QTree before the next bounce
 			qTree.clear();
 
 			// Do not contribute if we have pdf anomalies
-			if (pdfCombined <= 1e-5f || std::isnan(pdfCombined) || std::isinf(pdfCombined)) {
+			if (!(pdfCombined > 0.f) || !std::isfinite(pdfCombined)) {
 				records.push_back(record);
 				return;
 			}
@@ -1554,7 +1613,7 @@ public:
 			// Store the necessary records in the record structure
 			record.wi = wi;
 			record.bsdfWeight = (fBsdf * cosTheta) / (pdfCombined * rrpRecord);
-			record.storeRecord = (!isSpecular || isGlass);
+			record.storeRecord = (!isSpecular || usesSelectorGuide);
 			records.push_back(record);
 
 			// Define indirect ray for the next bounce, and recurse through the function
@@ -1567,7 +1626,7 @@ public:
 		Colour backgroundColour = scene->background->evaluate(r.dir);
 		record.emission = backgroundColour;
 		if (depth == 0 || previousSurfaceSpecular) { record.misEmission = backgroundColour; }
-		else if (backgroundColour.Lum() > 1e-8f) {
+		else {
 			// Evaluate MIS for Environment Map
 			// Environment Map PDF and PMF
 			float pmfLight = 1.f / scene->lights.size();
@@ -1745,7 +1804,8 @@ public:
 
 	void visualisePSSMap(ShadingData& shadingData, Sampler* sampler, PointBVH* cache, int k) {
 		// Create debug structures
-		std::cout << "\[DEBUG] Generating Primary Sample Space Visualisation..." << std::endl;
+		if (cache == nullptr) return;
+		std::cout << "[DEBUG] Generating Primary Sample Space Visualisation..." << std::endl;
 		// std::priority_queue<NearestPathVertex> debugMaxHeap;
 		HeapKNNQueue<MAX_NEARBY_VERTICES> debugMaxHeap;
 		std::vector<const PathVertex*> debugNearbyVertices;
@@ -1771,8 +1831,8 @@ public:
 
 			// BSDF Invert
 			float uDebug, vDebug, selectDebug;
-			shadingData.bsdf->invert(shadingData, sampler, vertex->wi, uDebug, vDebug, selectDebug);
-			if (uDebug < 0.f || uDebug > 1.f || vDebug < 0.f || vDebug > 1.f || std::isnan(uDebug) || std::isnan(vDebug)) continue;
+			shadingData.bsdf->invert(shadingData, vertex->wi, uDebug, vDebug, selectDebug);
+			if (uDebug < 0.f || uDebug >= 1.f || vDebug < 0.f || vDebug >= 1.f || std::isnan(uDebug) || std::isnan(vDebug)) continue;
 
 			// QTree Insert
 			float sqrtLum = std::sqrt(vertex->Li.Lum());
@@ -1787,7 +1847,7 @@ public:
 		const int SIZE = 512;
 		std::vector<unsigned char> buffer(SIZE * SIZE * 3, 0);
 		std::vector<unsigned char> bufferDefensive(SIZE * SIZE * 3, 0);
-		
+
 		// Draw the QTree as a grayscale heatmap
 		// Calculate maxPDF factor
 		float maxPdf = EPSILON;
@@ -1832,7 +1892,7 @@ public:
 				float normPdf = std::pow(qTreePdfPSS / maxPdf, 1.f / 2.2f);
 				float denom = std::max(maxPdf * dummyPdf, EPSILON);
 				float normPdfDefensive = std::pow(pdfDefensive / denom, 1.f / 2.2f);
-				
+
 				// Save the pixel into the buffer
 				int pixelIdx = ((SIZE - 1 - y) * SIZE + x) * 3;
 				getHeatmapRGB(normPdf, buffer[pixelIdx], buffer[pixelIdx + 1], buffer[pixelIdx + 2]);
@@ -1996,14 +2056,18 @@ public:
 				std::cout << "Learning phase finished. Building BVH for cached path vertices..." << std::endl;
 				std::cout << "Total cached path vertices: " << globalCacheList.size() << std::endl;
 
-				if (cacheBVH) delete cacheBVH;
-				cacheBVH = new PointBVH();
-				cacheBVH->build(std::move(globalCacheList), sceneName);
+				delete cacheBVH;
+				cacheBVH = nullptr;
+
+				if (!globalCacheList.empty()) {
+					cacheBVH = new PointBVH();
+					cacheBVH->build(std::move(globalCacheList), sceneName);
+				}
 
 				// Clear Global Cache Estimates List
 				globalCacheList.clear();
 				globalCacheList.shrink_to_fit();
-				std::cout << "BVH built successfully. Entering guiding phase..." << std::endl;
+				std::cout << (cacheBVH != nullptr ? "BVH built successfully. Entering guiding phase..." : "No valid training records were collected; continuing with BSDF sampling.") << std::endl;
 				isPointBVHBuilt = true;
 			}
 		}
@@ -2052,11 +2116,12 @@ public:
 								}
 								// Our novel Path Guiding in PSS
 								else if (renderMethod == "path_guide_pss") {
-									col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);
-									// col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, quadTree, isGuidingPhase, currentThreadStats, enableNEE);
-									if (isGuidingPhase && getSPP() == learningThreshold && x == film->width / 2 && y == film->height / 2) {
+									col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, currentThreadQTree, isGuidingPhase, currentThreadStats, enableNEE);// col = guidedPath(ray, &samplers[i], currentThreadPathVertexRecords, cacheBVH, quadTree, isGuidingPhase, currentThreadStats, enableNEE);
+									#if DEBUG_GUIDED_PATH
+									if (isGuidingPhase && getSPP() == learningThreshold + 1 && x == film->width / 2 && y == film->height / 2) {
 										viewPrimarySampleSpace(ray, &samplers[i], cacheBVH, MAX_NEARBY_VERTICES);
 									}
+									#endif
 								}
 								// Path Guiding with Photons
 								else if (renderMethod == "path_guide_photon") {
@@ -2088,6 +2153,7 @@ public:
 		for (unsigned int i = 0; i < numProcs; ++i) {
 			threads[i]->join();
 			delete threads[i];
+			threads[i] = nullptr;
 		}
 
 		// Draw the pixels on canvas sequentially to avoid race conditions
@@ -2102,6 +2168,7 @@ public:
 		if (renderMethod == "path_guide_pss") {
 			// --- Guiding Phase ---
 			if (isGuidingPhase) {
+				#if ENABLE_GUIDING_PROFILING
 				// Generate the profiling record	
 				double totalBVHTime = 0.0;
 				double totalQTreeTime = 0.0;
@@ -2186,8 +2253,8 @@ public:
 
 					csvFile.close();
 				}
-
-				// Reset the records
+				#endif
+				// Reset the records whether or not diagnostic output is enabled.
 				for (int i = 0; i < numProcs; i++) {
 					perThreadStats[i] = ProfilerStats();
 				}

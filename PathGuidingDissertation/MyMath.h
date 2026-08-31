@@ -7,6 +7,18 @@
 #include <cassert>
 #include <string.h>
 
+// C++20 does not require the non-standard M_* macros.  Keep the existing
+// formulas portable when the platform's <cmath> does not expose them.
+#ifndef M_E
+#define M_E 2.71828182845904523536
+#endif
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+#ifndef M_1_PI
+#define M_1_PI 0.31830988618379067154
+#endif
+
 // Fixing this define -> e.g. SQ(vertex.position.x - hitPosition.x)
 #define SQ(x)((x) * (x))
 
@@ -15,19 +27,27 @@
 // Helper Functions for MIS (Multiple Importance Sampling)
 // Balanced Heuristics
 float weightBalancedHeurictics(float pdfA, float pdfB) {
-	if (pdfA <= 0.f) return 0.f;
+	if (!(pdfA > 0.f) || !std::isfinite(pdfA)) return 0.f;
 	float pA = pdfA;
-	float pB = (pdfB > 0.f) ? pdfB : 0.f;
+	float pB = (pdfB > 0.f && std::isfinite(pdfB)) ? pdfB : 0.f;
 	return pA / (pA + pB);
 }
 
 // Power Heuristics
 // Beta is set to 2 as default, but can be increased further
 float weightPowerHeuristics(float pdfA, float pdfB, float beta = 2.f) {
-	if (pdfA <= 0.f) return 0.f;
-	float pABeta = (beta == 2.f) ? pdfA * pdfA : std::pow(pdfA, beta);
-	float pBBeta = (pdfB > 0.f) ? ((beta == 2.f) ? pdfB * pdfB : std::pow(pdfB, beta)) : 0.f;
-	return pABeta / (pABeta + pBBeta);
+	if (!(pdfA > 0.f) || !std::isfinite(pdfA)) return 0.f;
+	if (!(pdfB > 0.f) || !std::isfinite(pdfB)) return 1.f;
+
+	// Work with a ratio so very large PDFs cannot produce inf / inf.
+	if (pdfA >= pdfB) {
+		const float ratio = pdfB / pdfA;
+		const float powered = (beta == 2.f) ? ratio * ratio : std::pow(ratio, beta);
+		return 1.f / (1.f + powered);
+	}
+	const float ratio = pdfA / pdfB;
+	const float powered = (beta == 2.f) ? ratio * ratio : std::pow(ratio, beta);
+	return powered / (1.f + powered);
 }
 
 class Colour {
@@ -120,7 +140,7 @@ public:
 		assert((index >= 0 && index < 4) && "Invalid index passed, out of bounds!");
 		return coords[index];
 	}
-	
+
 	// Methods
 	Vec4 cross(Vec4 v) const {
 		return Vec4(
@@ -139,7 +159,7 @@ public:
 
 	float length() const { return sqrtf(SQ(x) + SQ(y) + SQ(z)); }
 	float lengthSquare() const { return SQ(x) + SQ(y) + SQ(z); }
-	
+
 	Vec4 normalize() const {
 		float l = 1.f / length();
 		return Vec4(x * l, y * l, z * l);
@@ -174,9 +194,9 @@ public:
 	// Constructors
 	Matrix() { identity(); }
 	Matrix(float m00, float m01, float m02, float m03,
-		   float m10, float m11, float m12, float m13,
-		   float m20, float m21, float m22, float m23,
-		   float m30, float m31, float m32, float m33) {
+		float m10, float m11, float m12, float m13,
+		float m20, float m21, float m22, float m23,
+		float m30, float m31, float m32, float m33) {
 		// First Row
 		a[0][0] = m00; a[0][1] = m01; a[0][2] = m02; a[0][3] = m03;
 		// Second Row
@@ -207,7 +227,7 @@ public:
 			a[0][3], a[1][3], a[2][3], a[3][3]
 		);
 	}
-	
+
 	static Matrix translation(const Vec4& v) {
 		Matrix mat;
 		mat.a[0][3] = v.x;
@@ -297,7 +317,7 @@ public:
 		memcpy(m, matrix.m, sizeof(float) * 16);
 		return (*this);
 	}
-	
+
 	Matrix invert() {
 		Matrix inv;
 		// Unrolled inverse from MESA library
@@ -321,8 +341,8 @@ public:
 		inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
 		inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
 		inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
-		
-		float det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];	
+
+		float det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
 		// This code should never be called. Add error handling if it is
 		if (det == 0.f) {
 			identity();
@@ -459,7 +479,7 @@ public:
 
 	static float sphericalPhi(const Vec4& wi) {
 		float p = atan2f(wi.y, wi.x);
-		return (p < 0.f) ? (p + (2.f * 3.14159265358979323846)) : p;
+		return (p < 0.f) ? (p + (2.f * M_PI)) : p;
 	}
 };
 

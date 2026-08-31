@@ -1,10 +1,13 @@
-#define NOMINMAX
-
+#include <algorithm>
 #include <cassert>
+#include <array>
 #include <cmath>
 #include <chrono>
+#include <climits>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -59,7 +62,9 @@ static void runInversionTestLoop(BSDF* testBSDF, const std::string& testName) {
 
 		// Invert BSDF
 		float u_out = 0.f, v_out = 0.f, sampleProbability = 0.f;
-		testShadingData.bsdf->invert(testShadingData, &sampler, wi, u_out, v_out, sampleProbability);
+		const std::mt19937 generatorBeforeInvert = sampler.generator;
+		testShadingData.bsdf->invert(testShadingData, wi, u_out, v_out, sampleProbability);
+		assert(sampler.generator == generatorBeforeInvert && "BSDF inversion must not consume random numbers.");
 		testSampler.set(u_out, v_out, sampleProbability);
 
 		float pdfReconstructed = 0.f;
@@ -77,6 +82,7 @@ static void runInversionTestLoop(BSDF* testBSDF, const std::string& testName) {
 		}
 		passedTestCount++;
 	}
+	assert(passedTestCount > 0 && "Inversion test did not produce any valid samples.");
 	std::cout << "[PASSED] " << testName << " (" << passedTestCount << " valid samples)" << std::endl;
 }
 
@@ -390,8 +396,8 @@ static void testExactMidpoint() {
 
 static void testNaNInFCatch() {
 	QTree qtree(3);
-	float nanVal = std::numeric_limits<float>::quiet_NaN();
-	float infVal = std::numeric_limits<float>::infinity();
+	constexpr float nanVal = std::numeric_limits<float>::quiet_NaN();
+	constexpr float infVal = std::numeric_limits<float>::infinity();
 
 	qtree.insert(0.5f, 0.5f, nanVal);
 	qtree.insert(0.2f, 0.2f, -nanVal);
@@ -426,19 +432,69 @@ static void runAllQTreeTests() {
 }
 // --- QTree Tests End ---
 
+static void testFresnelSelectorMasses() {
+	RayTracer::FresnelProbabilitySelect selector;
+	const float split = 0.337f;
+	assert(std::fabs(selector.probabilityMass(0.f, split) - split) < 1e-6f);
+	assert(selector.insertInterval(0.f, 0.2f, 10.f));
+	assert(std::fabs(selector.probabilityMass(0.f, 1.f) - 1.f) < 1e-5f);
+	assert(selector.probabilityMass(0.f, 0.2f) > 0.7f);
+	assert(std::fabs(selector.probabilityMass(0.f, split) + selector.probabilityMass(split, 1.f) - 1.f) < 1e-5f);
+
+	const float weightBeforeEndpoint = selector.totalWeight;
+	selector.insert(1.f, 100.f);
+	assert(selector.totalWeight == weightBeforeEndpoint && "The selector domain is half-open: [0,1).");
+
+	float selected = 0.f, sampledPdf = 0.f;
+	selector.sample(1.f, selected, sampledPdf);
+	assert(selected >= 0.f && selected < 1.f && sampledPdf > 0.f);
+	assert(std::fabs(sampledPdf - selector.pdf(selected)) < 1e-5f);
+
+	MTRandom sampler(77);
+	constexpr int SAMPLE_COUNT = 100000;
+	int belowSplit = 0;
+	for (int i = 0; i < SAMPLE_COUNT; ++i) {
+		selector.sample(sampler.next(), selected, sampledPdf);
+		if (selected < split) ++belowSplit;
+	}
+	const float empiricalMass = static_cast<float>(belowSplit) / SAMPLE_COUNT;
+	assert(std::fabs(empiricalMass - selector.probabilityMass(0.f, split)) < 0.01f);
+	std::cout << "Fresnel selector interval-mass tests passed..." << std::endl;
+}
+
+static void testPointBVHEdgeCases() {
+	PointBVH bvh;
+	std::vector<PathVertex> points;
+	for (int i = 0; i < 24; ++i) {
+		PathVertex vertex{};
+		vertex.position = Vec4(static_cast<float>(i), 0.f, 0.f);
+		points.push_back(vertex);
+	}
+	bvh.build(std::move(points), "");
+	bvh.validate(0);
+
+	HeapKNNQueue<3> heap;
+	float radiusSq = 1000.f;
+	bvh.kNNSearch(Vec4(0.f, 0.f, 0.f), radiusSq, heap);
+	assert(heap.size() == 3);
+
+	std::vector<PathVertex> empty;
+	bvh.build(std::move(empty), "");
+	radiusSq = 1000.f;
+	bvh.kNNSearch(Vec4(0.f, 0.f, 0.f), radiusSq, heap);
+	assert(heap.empty() && "An empty rebuild must invalidate the old BVH.");
+	std::cout << "Point-BVH edge-case tests passed..." << std::endl;
+}
+
 // Run all the tests here
 static void runTest() {
-	// BSDF Inversion Test
 	runAllBSDFInversionTests();
-
-	// QTree Test
 	runAllQTreeTests();
+	testFresnelSelectorMasses();
+	testPointBVHEdgeCases();
 }
 
 int main(int argc, char* argv[]) {
-	// Run testing code first before rendering any stuff!
-	runTest();
-
 	// Note - Test on these scenes
 	// Cornell Box +, Kitchen +, Bathroom +, Bathroom2 +, Staircase +
 	// Classroom +, Sibenik, Dining Room +
@@ -457,7 +513,7 @@ int main(int argc, char* argv[]) {
 	//std::string sceneName = "../Scenes/staircase2";
 	//std::string sceneName = "../Scenes/veach-bidir";
 	//std::string sceneName = "../Scenes/veach-mis";
-	
+
 	// -- Environment Map Test Scenes --
 	//std::string sceneName = "../Scenes/classroom";
 	//std::string sceneName = "../Scenes/car2";
@@ -482,6 +538,7 @@ int main(int argc, char* argv[]) {
 	//std::string method = "path_guide_photon";
 	//std::string method = "path_guide_pss";
 	double timeLimitSeconds = -1.0;  // Seconds!
+	bool runTests = false;
 
 	if (argc > 1) {
 		std::unordered_map<std::string, std::string> args;
@@ -494,42 +551,72 @@ int main(int argc, char* argv[]) {
 					args[argName] = argValue;
 				} else {
 					std::cerr << "Error: Missing value for argument '" << arg << "'\n";
+					return 1;
 				}
 			} else {
 				std::cerr << "Warning: Ignoring unexpected argument '" << arg << "'\n";
 			}
 		}
-		
-		for (const auto& pair : args) {
-			if (pair.first == "-scene") {
-				sceneName = pair.second;
+
+		try {
+			for (const auto& pair : args) {
+				if (pair.first == "-scene") {
+					sceneName = pair.second;
+				}
+				else if (pair.first == "-outputFilename") {
+					filename = pair.second;
+				}
+				else if (pair.first == "-SPP") {
+					if (!pair.second.empty() && pair.second[0] == '-') throw std::out_of_range("negative SPP");
+					SPP = static_cast<unsigned int>(stoul(pair.second));
+				}
+				else if (pair.first == "-method") {
+					method = pair.second;
+				}
+				else if (pair.first == "-timeLimitSecond") {
+					timeLimitSeconds = stod(pair.second);
+				}
+				else if (pair.first == "-runTests") {
+					runTests = (pair.second == "1" || pair.second == "true" || pair.second == "TRUE");
+				}
+				else {
+					throw std::invalid_argument("unknown option " + pair.first);
+				}
 			}
-			else if (pair.first == "-outputFilename") {
-				filename = pair.second;
-			}
-			else if (pair.first == "-SPP") {
-				SPP = stoi(pair.second);
-			}
-			else if (pair.first == "-method") {
-				method = pair.second;
-			}
-			else if (pair.first == "-timeLimitSecond") {
-				timeLimitSeconds = stod(pair.second);
-			}
+		}
+		catch (const std::exception& error) {
+			std::cerr << "Error: invalid command-line value (" << error.what() << ").\n";
+			return 1;
 		}
 	}
 
-	Scene* scene = loadScene(sceneName);
+	if (runTests) {
+		runTest();
+		return 0;
+	}
+	if (SPP == 0 || SPP > static_cast<unsigned int>(INT_MAX)) {
+		std::cerr << "Error: -SPP must be between 1 and INT_MAX.\n";
+		return 1;
+	}
+	const std::array<std::string, 5> validMethods = {
+		"path_trace", "path_guide_pss", "path_guide_photon", "photon_map", "direct"
+	};
+	if (std::find(validMethods.begin(), validMethods.end(), method) == validMethods.end()) {
+		std::cerr << "Error: unsupported render method '" << method << "'.\n";
+		return 1;
+	}
+
+	std::unique_ptr<Scene> scene(loadScene(sceneName));
 	GamesEngineeringBase::Window canvas;
 	canvas.create((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, "Tracer", false);
 	RayTracer rt;
-	rt.init(scene, &canvas, method, SPP);
+	// Include method-specific preprocessing (notably photon shooting/building) in
+	// the end-to-end experiment time. Component timings remain separate.
+	auto startTime = std::chrono::high_resolution_clock::now();
+	rt.init(scene.get(), &canvas, method, SPP);
 	rt.sceneName = sceneName;
 	bool running = true;
 	GamesEngineeringBase::Timer timer;
-
-	// Start the timer before the loop
-	auto startTime = std::chrono::high_resolution_clock::now();
 
 	while (running) {
 		canvas.checkInput();
@@ -581,10 +668,10 @@ int main(int argc, char* argv[]) {
 
 		bool sppReached = (rt.getSPP() >= SPP);
 		bool timeReached = (timeLimitSeconds > 0.0 && elapsedSeconds >= timeLimitSeconds);
-		
+
 		if (sppReached || timeReached) {
 			std::cout << "\n[Render Complete] Method: " << method
-				<< " | Achieved SPP: " << SPP
+				<< " | Achieved SPP: " << rt.getSPP()
 				<< " | Time: " << elapsedSeconds << "s"
 				<< " (Exit Reason: " << (timeReached ? "Time Limit" : "Target SPP") << " Reached)"
 				<< std::endl;

@@ -18,9 +18,9 @@ public:
 
 	float movespeed = 1.f;
 	float rotspeed = 5.f;
-	
+
 	RTCamera() { rotspeed = 5.f; }
-	
+
 	void forward() {
 		Vec4 dir = to - from;
 		dir = dir.normalize() * movespeed;
@@ -159,6 +159,11 @@ void loadInstance(std::string sceneName, std::vector<Triangle>& meshTriangles, s
 		material = new ConductorBSDF(loadTexture(filename, textureManager), eta, k, roughness);
 		meshMaterials.push_back(material);
 	}
+	if (material == NULL) {
+		// Flag there is an issue but keep loading as the rest of the scene might be fine.
+		std::cout << "Error: unsupported or missing BSDF in scene instance." << std::endl;
+		return;
+	}
 	if (instance.material.find("emission").getValue("") != "") {
 		Colour emission;
 		instance.material.find("emission").getValuesAsVector3(emission.r, emission.g, emission.b);
@@ -174,12 +179,6 @@ void loadInstance(std::string sceneName, std::vector<Triangle>& meshTriangles, s
 		material = new LayeredBSDF(base, sigmaa, thickness, intIOR, extIOR);
 		meshMaterials[meshMaterials.size() - 1] = material;
 	}
-	if (material == NULL) {
-		// Flag there is an issue but keep loading as the rest of the scene might be fine
-		std::cout << "Error in loading" << std::endl;
-		return;
-	}
-
 	int materialIndex = (int)meshMaterials.size() - 1;
 	std::vector<Vertex> vertices;
 	std::vector<unsigned int> indices;
@@ -262,6 +261,7 @@ Scene* loadScene(std::string sceneName) {
 		background = new BackgroundColour(Colour(0.0f, 0.0f, 0.0f));
 	}
 	scene->init(meshTriangles, meshMaterials, background);
+	for (const auto& entry : textureManager) scene->textures.push_back(entry.second);
 	viewcamera.movespeed = (scene->bounds.max - scene->bounds.min).length() * 0.05f;
 	scene->build();
 	use<SceneBounds>().sceneCentre = (scene->bounds.max + scene->bounds.min) * 0.5f;

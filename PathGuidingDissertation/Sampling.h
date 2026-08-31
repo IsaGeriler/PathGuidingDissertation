@@ -10,6 +10,7 @@
 
 class Sampler {
 public:
+	virtual ~Sampler() = default;
 	virtual float next() = 0;
 };
 
@@ -19,7 +20,7 @@ public:
 	std::uniform_real_distribution<float> dist;
 
 	MTRandom(unsigned int seed = 1) : dist(0.f, 1.f) { generator.seed(seed); }
-	float next() { return dist(generator); }
+	float next() override { return dist(generator); }
 };
 
 // GuidedPathSampler to be included in our nex method, to pass (u,v)
@@ -41,8 +42,7 @@ public:
 		called = 0;
 	}
 
-	float next() {
-		// u - v - selectProbability (Fresnel)
+	float next() override {
 		if (called == 0) { called++; return u; }
 		if (called == 1) { called++; return v; }
 		if (called == 2) { called++; return selectProbability; }
@@ -57,33 +57,33 @@ class SamplingDistributions {
 public:
 	static Vec4 uniformSampleHemisphere(float r1, float r2) {
 		float theta = acos(r1);
-		float phi = 2.f * 3.14159265358979323846 * r2;
+		float phi = 2.f * M_PI * r2;
 		return SphericalCoordinates::sphericalToWorld(theta, phi);
 	}
 
 	static float uniformHemispherePDF(const Vec4 wi) {
-		return 1.f / (2.f * 3.14159265358979323846);
+		return 1.f / (2.f * M_PI);
 	}
 
 	static Vec4 uniformSampleSphere(float r1, float r2) {
 		float theta = acos(1.f - (2.f * r1));
-		float phi = 2.f * 3.14159265358979323846 * r2;
+		float phi = 2.f * M_PI *r2;
 		return SphericalCoordinates::sphericalToWorld(theta, phi);
 	}
 
 	static float uniformSpherePDF(const Vec4& wi) {
-		return 1.f / (4.f * 3.14159265358979323846);
+		return 1.f / (4.f * M_PI);
 	}
 
 	static Vec4 cosineSampleHemisphere(float r1, float r2) {
 		float theta = acos(sqrt(r1));
-		float phi = 2.f * 3.14159265358979323846 * r2;
+		float phi = 2.f * M_PI * r2;
 		return SphericalCoordinates::sphericalToWorld(theta, phi);
 	}
 
 	static float cosineHemispherePDF(const Vec4 wi) {
 		float theta = SphericalCoordinates::sphericalTheta(wi);
-		return (cos(theta) > 0.f) ? cos(theta) * 0.318309886183790671538 : 0.f;
+		return (cos(theta) > 0.f) ? cos(theta) * M_1_PI : 0.f;
 	}
 };
 

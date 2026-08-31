@@ -15,6 +15,7 @@ public:
 
 class Light {
 public:
+	virtual ~Light() = default;
 	virtual Vec4 sample(const ShadingData& shadingData, Sampler* sampler, Colour& emittedColour, float& pdf) = 0;
 	virtual Colour evaluate(const Vec4& wi) = 0;
 	virtual float PDF(const ShadingData& shadingData, const Vec4& wi) = 0;
@@ -57,7 +58,7 @@ public:
 	float totalIntegratedPower() {
 		return (triangle->area * emission.Lum());
 	}
-	
+
 	Vec4 samplePositionFromLight(Sampler* sampler, float& pdf) {
 		return triangle->sample(sampler, pdf);
 	}
@@ -139,9 +140,8 @@ public:
 	}
 
 	// Destructor
-	~EnvironmentMap() {
-		if (env != nullptr) delete env;
-		if (tabulatedSampling != nullptr) delete tabulatedSampling;
+	~EnvironmentMap() override {
+		delete tabulatedSampling;
 	}
 
 	// Methods
@@ -157,12 +157,12 @@ public:
 		// Convert to Spherical Coordinates
 		float theta = 3.14159265358979323846 * v;
 		float phi = 2 * 3.14159265358979323846 * u;
-		
+
 		// Convert to direction (y-up) - (cos(phi) * sin(theta), cos(theta), sin(phi) * sin(theta))
 		float cosTheta = cos(theta); float cosPhi = cos(phi);
 		float sinTheta = sin(theta); float sinPhi = sin(phi);
 		Vec4 wi(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
-		
+
 		// Get PDF and reflected colour, return direction
 		pdf = (sinTheta <= 0.f) ? 0.f : sampledPdf / (2 * 3.14159265358979323846 * 3.14159265358979323846 * sinTheta);
 		reflectedColour = (pdf <= 0.f) ? Colour(0.f, 0.f, 0.f) : evaluate(wi);
@@ -173,7 +173,7 @@ public:
 		float u = atan2f(wi.z, wi.x);
 		u = (u < 0.f) ? u + (2.f * M_PI) : u;
 		u = u / (2.f * M_PI);
-		float v = acosf(wi.y) / M_PI;
+		float v = acosf(std::clamp(wi.y, -1.f, 1.f)) / M_PI;
 		return env->sample(u, v);
 	}
 
@@ -182,7 +182,7 @@ public:
 		float u = atan2f(wi.z, wi.x);
 		u = (u < 0.f) ? u + (2.f * M_PI) : u;
 		u = u / (2.f * M_PI);
-		float v = acosf(wi.y) / M_PI;
+		float v = acosf(std::clamp(wi.y, -1.f, 1.f)) / M_PI;
 
 		// Calculate sinTheta = sin(PI * v) and return PDF
 		float sinTheta = sin(3.14159265358979323846 * v);
@@ -200,7 +200,7 @@ public:
 	float totalIntegratedPower() {
 		float total = 0.f;
 		for (int i = 0; i < env->height; i++) {
-			float st = sinf(((float)i / (float)env->height) * M_PI);
+			float st = sinf((((float)i + 0.5f) / (float)env->height) * M_PI);
 			for (int n = 0; n < env->width; n++) {
 				total += (env->texels[(i * env->width) + n].Lum() * st);
 			}

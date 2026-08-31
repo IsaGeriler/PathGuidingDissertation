@@ -1,0 +1,420 @@
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247057
+Average BVH Search Time   : 4747.58 ms / frame
+Average QTree Build Time  : 4357.95 ms / frame
+Average BSDF Invert Time  : 2141.5 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.8284 microseconds
+  QTree Build : 24.6266 microseconds
+  BSDF Invert : 12.1016 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247249
+Average BVH Search Time   : 4627.37 ms / frame
+Average QTree Build Time  : 4263.17 ms / frame
+Average BSDF Invert Time  : 2079.9 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.1479 microseconds
+  QTree Build : 24.09 microseconds
+  BSDF Invert : 11.7529 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4250010
+Average BVH Search Time   : 4740.43 ms / frame
+Average QTree Build Time  : 4364.79 ms / frame
+Average BSDF Invert Time  : 2133.31 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.7694 microseconds
+  QTree Build : 24.6482 microseconds
+  BSDF Invert : 12.0469 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247887
+Average BVH Search Time   : 4626.23 ms / frame
+Average QTree Build Time  : 4287.14 ms / frame
+Average BSDF Invert Time  : 2090.77 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.1376 microseconds
+  QTree Build : 24.2218 microseconds
+  BSDF Invert : 11.8126 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4249165
+Average BVH Search Time   : 4640.93 ms / frame
+Average QTree Build Time  : 4253.18 ms / frame
+Average BSDF Invert Time  : 2083.56 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2128 microseconds
+  QTree Build : 24.0227 microseconds
+  BSDF Invert : 11.7683 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4249394
+Average BVH Search Time   : 4615.53 ms / frame
+Average QTree Build Time  : 4267.29 ms / frame
+Average BSDF Invert Time  : 2081.3 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.0679 microseconds
+  QTree Build : 24.1011 microseconds
+  BSDF Invert : 11.7549 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4246486
+Average BVH Search Time   : 4655.61 ms / frame
+Average QTree Build Time  : 4316.5 ms / frame
+Average BSDF Invert Time  : 2088.74 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.3122 microseconds
+  QTree Build : 24.3957 microseconds
+  BSDF Invert : 11.805 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4249109
+Average BVH Search Time   : 4616.56 ms / frame
+Average QTree Build Time  : 4274.27 ms / frame
+Average BSDF Invert Time  : 2081.96 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.0754 microseconds
+  QTree Build : 24.1421 microseconds
+  BSDF Invert : 11.7594 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247602
+Average BVH Search Time   : 4619.34 ms / frame
+Average QTree Build Time  : 4304.04 ms / frame
+Average BSDF Invert Time  : 2089.8 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.1004 microseconds
+  QTree Build : 24.3189 microseconds
+  BSDF Invert : 11.8079 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4251220
+Average BVH Search Time   : 4617.85 ms / frame
+Average QTree Build Time  : 4262.61 ms / frame
+Average BSDF Invert Time  : 2079.75 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.0698 microseconds
+  QTree Build : 24.0643 microseconds
+  BSDF Invert : 11.7411 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4250425
+Average BVH Search Time   : 4634.77 ms / frame
+Average QTree Build Time  : 4308.24 ms / frame
+Average BSDF Invert Time  : 2084.75 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.1702 microseconds
+  QTree Build : 24.3265 microseconds
+  BSDF Invert : 11.7715 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4243917
+Average BVH Search Time   : 4642.78 ms / frame
+Average QTree Build Time  : 4294.3 ms / frame
+Average BSDF Invert Time  : 2081.1 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2556 microseconds
+  QTree Build : 24.2849 microseconds
+  BSDF Invert : 11.7689 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247748
+Average BVH Search Time   : 4827.56 ms / frame
+Average QTree Build Time  : 4444.58 ms / frame
+Average BSDF Invert Time  : 2188.86 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 27.2759 microseconds
+  QTree Build : 25.1121 microseconds
+  BSDF Invert : 12.3672 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4249366
+Average BVH Search Time   : 4665.35 ms / frame
+Average QTree Build Time  : 4297.62 ms / frame
+Average BSDF Invert Time  : 2090.35 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.3494 microseconds
+  QTree Build : 24.2726 microseconds
+  BSDF Invert : 11.8061 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4241684
+Average BVH Search Time   : 4665.55 ms / frame
+Average QTree Build Time  : 4335.5 ms / frame
+Average BSDF Invert Time  : 2108.08 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.3983 microseconds
+  QTree Build : 24.5308 microseconds
+  BSDF Invert : 11.9278 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4249016
+Average BVH Search Time   : 4661.6 ms / frame
+Average QTree Build Time  : 4285.06 ms / frame
+Average BSDF Invert Time  : 2086.52 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.3304 microseconds
+  QTree Build : 24.2036 microseconds
+  BSDF Invert : 11.7854 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4246688
+Average BVH Search Time   : 4636.23 ms / frame
+Average QTree Build Time  : 4270.99 ms / frame
+Average BSDF Invert Time  : 2085.52 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2015 microseconds
+  QTree Build : 24.1374 microseconds
+  BSDF Invert : 11.7862 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4248869
+Average BVH Search Time   : 4643 ms / frame
+Average QTree Build Time  : 4269.15 ms / frame
+Average BSDF Invert Time  : 2088.32 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2263 microseconds
+  QTree Build : 24.1146 microseconds
+  BSDF Invert : 11.796 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4246724
+Average BVH Search Time   : 4648.44 ms / frame
+Average QTree Build Time  : 4294.95 ms / frame
+Average BSDF Invert Time  : 2108.91 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2702 microseconds
+  QTree Build : 24.2725 microseconds
+  BSDF Invert : 11.9183 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4249955
+Average BVH Search Time   : 4641.58 ms / frame
+Average QTree Build Time  : 4309.49 ms / frame
+Average BSDF Invert Time  : 2084.07 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2115 microseconds
+  QTree Build : 24.3362 microseconds
+  BSDF Invert : 11.769 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4248715
+Average BVH Search Time   : 4613.86 ms / frame
+Average QTree Build Time  : 4306.28 ms / frame
+Average BSDF Invert Time  : 2088.79 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.0626 microseconds
+  QTree Build : 24.3251 microseconds
+  BSDF Invert : 11.7991 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247300
+Average BVH Search Time   : 4670.34 ms / frame
+Average QTree Build Time  : 4328.18 ms / frame
+Average BSDF Invert Time  : 2103.7 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.3904 microseconds
+  QTree Build : 24.457 microseconds
+  BSDF Invert : 11.8873 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4245333
+Average BVH Search Time   : 4668.87 ms / frame
+Average QTree Build Time  : 4306.83 ms / frame
+Average BSDF Invert Time  : 2091.65 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.3944 microseconds
+  QTree Build : 24.3477 microseconds
+  BSDF Invert : 11.8247 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247663
+Average BVH Search Time   : 4676.9 ms / frame
+Average QTree Build Time  : 4311.83 ms / frame
+Average BSDF Invert Time  : 2097.29 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.4252 microseconds
+  QTree Build : 24.3625 microseconds
+  BSDF Invert : 11.8501 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4248310
+Average BVH Search Time   : 4650.18 ms / frame
+Average QTree Build Time  : 4272.64 ms / frame
+Average BSDF Invert Time  : 2089.96 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2703 microseconds
+  QTree Build : 24.1375 microseconds
+  BSDF Invert : 11.8068 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247594
+Average BVH Search Time   : 4639.55 ms / frame
+Average QTree Build Time  : 4287.36 ms / frame
+Average BSDF Invert Time  : 2084.07 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2147 microseconds
+  QTree Build : 24.2247 microseconds
+  BSDF Invert : 11.7755 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4248819
+Average BVH Search Time   : 4642.11 ms / frame
+Average QTree Build Time  : 4281.38 ms / frame
+Average BSDF Invert Time  : 2091.42 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2215 microseconds
+  QTree Build : 24.1839 microseconds
+  BSDF Invert : 11.8137 microseconds
+=========================================
+
+
+=========================================
+      PATH GUIDING PROFILING REPORT      
+=========================================
+Total Guided Path Bounces : 4247623
+Average BVH Search Time   : 4642.32 ms / frame
+Average QTree Build Time  : 4273.4 ms / frame
+Average BSDF Invert Time  : 2087.82 ms / frame
+-----------------------------------------
+Time Per Bounce Stats:
+  BVH Search  : 26.2301 microseconds
+  QTree Build : 24.1456 microseconds
+  BSDF Invert : 11.7967 microseconds
+=========================================
+

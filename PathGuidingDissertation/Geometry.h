@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cfloat>
 #include <climits>
 #include <vector>
 #include <utility>
@@ -46,7 +47,7 @@ public:
 
 	// Methods
 	void init(Vec4& _n, float _d) { n = _n; d = _d; }
-	
+
 	// Ray-Plane Intersection Equation
 	bool rayIntersect(Ray& r, float& t) const {
 		// Calculate Denominator
@@ -106,7 +107,7 @@ public:
 		// Calculate p, and determinant
 		Vec4 p = Cross(r.dir, _e1);
 		float det = Dot(_e0, p);
-		
+
 		// If det is less than epsilon, ray is parallel to the triangle
 		if (fabs(det) < MOLLER_TRUMBORE_EPSILON) return false;
 
@@ -114,7 +115,7 @@ public:
 		// Calculate inverse determinant, and T
 		float invDet = 1.f / det;
 		Vec4 T = r.o - vertices[0].p;
-		
+
 		// Get Barycentric Beta (u)
 		u = Dot(T, p) * invDet;
 		if (u < 0.f || u > 1.f) return false;
@@ -135,7 +136,7 @@ public:
 		interpolatedU = vertices[0].u * alpha + vertices[1].u * beta + vertices[2].u * gamma;
 		interpolatedV = vertices[0].v * alpha + vertices[1].v * beta + vertices[2].v * gamma;
 	}
-	
+
 	Vec4 sample(Sampler* sampler, float& pdf) {
 		float r1 = sampler->next();
 		float r2 = sampler->next();
@@ -171,12 +172,12 @@ public:
 		max = Max(max, p);
 		min = Min(min, p);
 	}
-	
+
 	bool rayAABB(const Ray& r, float& t) const {
 		// Check all six planes simultaneously
 		Vec4 tmin = (min - r.o) * r.invDir;
 		Vec4 tmax = (max - r.o) * r.invDir;
-		
+
 		// Values represent entry and exit
 		Vec4 tentry = Min(tmin, tmax);
 		Vec4 texit = Max(tmin, tmax);
@@ -217,14 +218,14 @@ public:
 	// Cointains a point or AABB in the parent AABB for the PointBVHNode test
 	bool containsPoint(const Vec4& point, float epsilon) const {
 		return (point.x >= min.x - epsilon && point.x <= max.x + epsilon) &&
-			   (point.y >= min.y - epsilon && point.y <= max.y + epsilon) &&
-			   (point.z >= min.z - epsilon && point.z <= max.z + epsilon);
+			(point.y >= min.y - epsilon && point.y <= max.y + epsilon) &&
+			(point.z >= min.z - epsilon && point.z <= max.z + epsilon);
 	}
 
 	bool containsAABB(const AABB& bbox, float epsilon) const {
 		return (bbox.min.x >= min.x - epsilon && bbox.max.x <= max.x + epsilon) &&
-			   (bbox.min.y >= min.y - epsilon && bbox.max.y <= max.y + epsilon) &&
-			   (bbox.min.z >= min.z - epsilon && bbox.max.z <= max.z + epsilon);
+			(bbox.min.y >= min.y - epsilon && bbox.max.y <= max.y + epsilon) &&
+			(bbox.min.z >= min.z - epsilon && bbox.max.z <= max.z + epsilon);
 	}
 
 	float distanceSqToPoint(const Vec4& p) const {
@@ -320,7 +321,7 @@ private:
 				int triangleIndex = triangleIndexes[first + i];
 				Triangle& triangle = triangles[triangleIndex];
 				int binIndex = std::min(BUILD_BINS - 1, static_cast<int>((triangle.centre()[ax] - minBounds) * scale));
-				
+
 				bin[binIndex].triangleCount++;
 				bin[binIndex].bounds.extend(triangle.vertices[0].p);
 				bin[binIndex].bounds.extend(triangle.vertices[1].p);
@@ -381,7 +382,7 @@ private:
 		float splitPosition = -FLT_MAX;
 		float splitCost = findBestSplitPlane(node, triangles, axis, splitPosition);
 		float noSplitCost = calculateCost(node);
-		
+
 		// Terminate if split is more expensive than not splitting
 		if (splitCost >= noSplitCost || axis == -1) return;
 
@@ -402,12 +403,12 @@ private:
 		// Create the child nodes
 		int leftChildIndex = nodesUsed++;
 		int rightChildIndex = nodesUsed++;
-		
+
 		bvhBuildNode[leftChildIndex].leftFirst = node.leftFirst;
 		bvhBuildNode[leftChildIndex].used = leftCount;
 		bvhBuildNode[rightChildIndex].leftFirst = i;
 		bvhBuildNode[rightChildIndex].used = node.used - leftCount;
-		
+
 		// Update the parent node
 		node.leftFirst = leftChildIndex;
 		node.used = 0;

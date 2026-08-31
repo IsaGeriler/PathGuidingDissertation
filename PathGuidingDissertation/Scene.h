@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cfloat>
 #include <vector>
 
 #include "MyMath.h"
@@ -21,7 +22,7 @@ public:
 
 	Vec4 origin;  // Ray Origin
 	Vec4 viewDirection;
-	
+
 	void init(Matrix ProjectionMatrix, int screenwidth, int screenheight) {
 		projectionMatrix = ProjectionMatrix;
 		inverseProjectionMatrix = ProjectionMatrix.invert();
@@ -62,7 +63,7 @@ public:
 
 		x = (pproj.x + 1.f) * 0.5f;
 		y = (pproj.y + 1.f) * 0.5f;
-		
+
 		if (x < 0.f || x > 1.f || y < 0.f || y > 1.f) return false;
 		x = x * width;
 		y = 1.f - y;
@@ -75,11 +76,25 @@ class Scene {
 public:
 	std::vector<Triangle> triangles;
 	std::vector<BSDF*> materials;
+	std::vector<Texture*> textures;
 	std::vector<Light*> lights;
 	Light* background = NULL;
 	BVHNode* bvh = NULL;
 	Camera camera;
 	AABB bounds;
+
+	Scene() = default;
+	Scene(const Scene&) = delete;
+	Scene& operator=(const Scene&) = delete;
+	~Scene() {
+		delete bvh;
+		for (Light* light : lights) {
+			if (light != background) delete light;
+		}
+		delete background;
+		for (BSDF* material : materials) delete material;
+		for (Texture* texture : textures) delete texture;
+	}
 
 	void build() {
 		// Add BVH building code here
@@ -109,15 +124,15 @@ public:
 		if (lights.empty()) { pmf = 0.f; return nullptr; }
 
 		// PMF for i'th light
-		pmf = 1.f / lights.size();
+		pmf = 1.f / static_cast<float>(lights.size());
 
 		// Sampling
 		unsigned int nLights = lights.size();
 		unsigned int index = static_cast<unsigned int>(floorf(sampler->next() * nLights));
-		if (index < 0 || index >= nLights) { pmf = 0.f; return nullptr; }
+		if (index >= nLights) { pmf = 0.f; return nullptr; }
 		return lights[index];
 	}
-	
+
 	void init(std::vector<Triangle> meshTriangles, std::vector<BSDF*> meshMaterials, Light* _background) {
 		for (int i = 0; i < meshTriangles.size(); i++) {
 			triangles.push_back(meshTriangles[i]);
