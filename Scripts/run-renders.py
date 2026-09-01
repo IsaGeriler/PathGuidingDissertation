@@ -17,7 +17,7 @@ BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 RENDERER_BIN = os.path.join(BASE_DIR, "x64", "Release", "PathGuidingDissertation.exe")
 
 # Directory to save output HDR/PNG images
-OUTPUT_DIR = os.path.join(BASE_DIR, "Images", "PathTraceVsPathGuide")
+OUTPUT_DIR = os.path.join(BASE_DIR, "Images", "Experiments")
 
 # Summary log file
 LOG_CSV = os.path.join(OUTPUT_DIR, "render_benchmark_results.csv")
