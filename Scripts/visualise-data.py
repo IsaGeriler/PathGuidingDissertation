@@ -154,7 +154,7 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.join(script_dir, "EvaluationResults")
     # Save final PDF
-    plots_dir = os.path.join(base_dir, "Final_Plots")
+    plots_dir = os.path.join(base_dir, "AllFinalPlots")
     os.makedirs(plots_dir, exist_ok=True)
     print("--- Starting Plot, and Table Generation... ---")
     # Find all CSVs inside EvaluationResults

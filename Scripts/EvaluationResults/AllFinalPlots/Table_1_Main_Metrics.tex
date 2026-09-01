@@ -1,0 +1,34 @@
+\begin{table}[htbp]
+                         \centering
+                         \resizebox{\textwidth}{!}{\begin{tabular}{llrrrrrrrrr}
+\toprule
+ &  & \multicolumn{3}{c}{FLIP} & \multicolumn{3}{c}{SSIM} & \multicolumn{3}{c}{RRMSE} \\
+ & SPP & 32 & 128 & 512 & 32 & 128 & 512 & 32 & 128 & 512 \\
+Scene & Method &  &  &  &  &  &  &  &  &  \\
+\midrule
+\multirow[t]{3}{*}{classroom} & Path Guiding PSS (Ours) & 0.2257 & 0.1391 & 0.0905 & 0.2695 & 0.4410 & 0.6247 & 0.7503 & 0.5260 & 0.3097 \\
+ & Path Guiding Photons & 0.2394 & 0.1477 & 0.0961 & 0.2548 & 0.4208 & 0.6032 & 0.7973 & 1.4410 & 0.3202 \\
+ & Path Tracing (Baseline) & 0.2358 & 0.1443 & 0.0922 & 0.2557 & 0.4251 & 0.6173 & 0.8232 & 0.5719 & 0.3515 \\
+\cline{1-11}
+\multirow[t]{3}{*}{cornell-box} & Path Guiding PSS (Ours) & 0.1576 & 0.1095 & 0.0727 & 0.6461 & 0.8697 & 0.9587 & 0.9661 & 0.7326 & 0.5358 \\
+ & Path Guiding Photons & 0.1652 & 0.1138 & 0.0759 & 0.6225 & 0.8578 & 0.9549 & 0.9597 & 0.7250 & 0.5377 \\
+ & Path Tracing (Baseline) & 0.1705 & 0.1182 & 0.0808 & 0.6007 & 0.8467 & 0.9513 & 1.0275 & 0.7924 & 0.5779 \\
+\cline{1-11}
+\multirow[t]{3}{*}{dining-room} & Path Guiding PSS (Ours) & 0.2354 & 0.1353 & 0.0857 & 0.3009 & 0.5335 & 0.7654 & 1.6482 & 0.8747 & 0.5703 \\
+ & Path Guiding Photons & 0.2744 & 0.1537 & 0.0945 & 0.2520 & 0.4716 & 0.7207 & 2.1618 & 0.9300 & 0.6154 \\
+ & Path Tracing (Baseline) & 0.2754 & 0.1541 & 0.0944 & 0.2503 & 0.4692 & 0.7188 & 1.7243 & 1.0364 & 0.5983 \\
+\cline{1-11}
+\multirow[t]{3}{*}{kitchen} & Path Guiding PSS (Ours) & 0.1754 & 0.0969 & 0.0581 & 0.3570 & 0.5426 & 0.7504 & 1.7642 & 1.6771 & 0.4925 \\
+ & Path Guiding Photons & 0.2023 & 0.1178 & 0.0714 & 0.3368 & 0.4964 & 0.6952 & 3.3268 & 1.3916 & 0.7999 \\
+ & Path Tracing (Baseline) & 0.1993 & 0.1114 & 0.0653 & 0.3349 & 0.5023 & 0.7157 & 1.5040 & 0.9427 & 0.5371 \\
+\cline{1-11}
+\multirow[t]{3}{*}{staircase} & Path Guiding PSS (Ours) & 0.1301 & 0.0798 & 0.0505 & 0.4495 & 0.6791 & 0.8558 & 0.4987 & 0.2677 & 0.1650 \\
+ & Path Guiding Photons & 0.1551 & 0.0989 & 0.0654 & 0.4011 & 0.6052 & 0.7832 & 0.6034 & 0.3768 & 0.2073 \\
+ & Path Tracing (Baseline) & 0.1502 & 0.0924 & 0.0582 & 0.4107 & 0.6361 & 0.8247 & 0.5912 & 0.3183 & 0.1670 \\
+\cline{1-11}
+\bottomrule
+\end{tabular}
+}
+                         \caption{Quantitative comparison of equal-sample rendering quality. FLIP and RRMSE are lower-is-better, SSIM is higher-is-better.}
+                         \label{tab:main_metrics}
+                         \end{table}

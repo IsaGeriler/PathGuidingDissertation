@@ -117,81 +117,90 @@ if __name__ == "__main__":
     master_results_dir = os.path.join(script_dir, "EvaluationResults")
 
     # --- Configuration for Multiple Scenes ---
-    # Add Dining Room and Classroom here after implementing Environment Map for Photon Map
     SCENES_CONFIG = {
         "CornellBox": {
             "gt_base": os.path.join(repo_root, "Images", "GroundTruths", "CornellBoxPathTrace8192SPP"),
             "tests": [
-                # Cornell Box
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_trace_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_trace_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_trace_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_pss_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_pss_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_pss_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_photon_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_photon_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "CornellBoxResults", "cornell-box_path_guide_photon_512spp")
+                # Cornell Box - 32 spp
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_trace_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_guide_photon_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_guide_pss_32spp"),
+                # Cornell Box - 128 spp
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_trace_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_guide_photon_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_guide_pss_128spp"),
+                # Cornell Box - 512 spp
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_trace_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_guide_photon_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "CornellBoxResults", "cornell-box_path_guide_pss_512spp")
             ]
         },
         "Kitchen": {
             "gt_base": os.path.join(repo_root, "Images", "GroundTruths", "KitchenPathTrace8192SPP"),
             "tests": [
-                # Kitchen
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_trace_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_trace_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_trace_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_pss_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_pss_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_pss_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_photon_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_photon_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "KitchenResults", "kitchen_path_guide_photon_512spp")
+                # Kitchen - 32 spp
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_trace_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_guide_photon_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_guide_pss_32spp"),
+                # Kitchen - 128 spp
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_trace_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_guide_photon_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_guide_pss_128spp"),
+                # Kitchen - 512 spp
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_trace_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_guide_photon_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "KitchenResults", "kitchen_path_guide_pss_512spp")
             ]
         },
         "Staircase": {
             "gt_base": os.path.join(repo_root, "Images", "GroundTruths", "StaircasePathTrace8192SPP"),
             "tests": [
-                # Staircase
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_trace_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_trace_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_trace_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_pss_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_pss_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_pss_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_photon_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_photon_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "StaircaseResults", "staircase_path_guide_photon_512spp")
+                # Staircase - 32 spp
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_trace_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_guide_photon_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_guide_pss_32spp"),
+                # Staircase - 128 spp
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_trace_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_guide_photon_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_guide_pss_128spp"),
+                # Staircase - 512 spp
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_trace_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_guide_photon_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "StaircaseResults", "staircase_path_guide_pss_512spp")
             ]
         },
         "Classroom" : {
             "gt_base": os.path.join(repo_root, "Images", "GroundTruths", "ClassroomPathTrace8192SPP"),
             "tests": [
-                # Classroom
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_trace_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_trace_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_trace_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_guide_pss_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_guide_pss_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_guide_pss_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_guide_photon_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_guide_photon_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "ClassroomResults", "classroom_path_guide_photon_512spp")
+                # Classroom - 32 spp
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_trace_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_guide_photon_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_guide_pss_32spp"),
+                # Classroom - 128 spp
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_trace_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_guide_photon_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_guide_pss_128spp"),
+                # Classroom - 512 spp
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_trace_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_guide_photon_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "ClassroomResults", "classroom_path_guide_pss_512spp")
             ]
         },
         "DiningRoom" : {
             "gt_base": os.path.join(repo_root, "Images", "GroundTruths", "DiningRoomPathTrace8192SPP"),
             "tests": [
-                # Dining Room
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_trace_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_trace_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_trace_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_guide_pss_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_guide_pss_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_guide_pss_512spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_guide_photon_32spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_guide_photon_128spp"),
-                os.path.join(repo_root, "Images", "PathTraceVsPathGuide", "DiningRoomResults", "dining-room_path_guide_photon_512spp")   
+                # Dining Room - 32 spp
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_trace_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_guide_photon_32spp"),
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_guide_pss_32spp"),
+                # Dining Room - 128 spp
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_trace_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_guide_photon_128spp"),
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_guide_pss_128spp"),
+                # Dining Room - 512 spp
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_trace_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_guide_photon_512spp"),
+                os.path.join(repo_root, "Images", "Experiments", "DiningRoomResults", "dining-room_path_guide_pss_512spp")   
             ]
         }
     }

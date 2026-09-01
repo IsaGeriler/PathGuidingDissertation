@@ -1,0 +1,34 @@
+\begin{table}[htbp]
+                         \centering
+                         \resizebox{\textwidth}{!}{\begin{tabular}{llrrrrrr}
+\toprule
+ &  & \multicolumn{3}{c}{MSE} & \multicolumn{3}{c}{RMSE} \\
+ & SPP & 32 & 128 & 512 & 32 & 128 & 512 \\
+Scene & Method &  &  &  &  &  &  \\
+\midrule
+\multirow[t]{3}{*}{classroom} & Path Guiding PSS (Ours) & 957.3632 & 504.4488 & 167.6318 & 30.9413 & 22.4599 & 12.9473 \\
+ & Path Guiding Photons & 1035.6984 & 530.1997 & 158.4734 & 32.1823 & 23.0261 & 12.5886 \\
+ & Path Tracing (Baseline) & 1071.5668 & 487.2761 & 135.2929 & 32.7348 & 22.0743 & 11.6315 \\
+\cline{1-8}
+\multirow[t]{3}{*}{cornell-box} & Path Guiding PSS (Ours) & 21.3243 & 5.4873 & 1.5412 & 4.6178 & 2.3425 & 1.2414 \\
+ & Path Guiding Photons & 25.4184 & 6.5118 & 1.7901 & 5.0417 & 2.5518 & 1.3380 \\
+ & Path Tracing (Baseline) & 24.4832 & 6.3053 & 1.7395 & 4.9481 & 2.5110 & 1.3189 \\
+\cline{1-8}
+\multirow[t]{3}{*}{dining-room} & Path Guiding PSS (Ours) & 245.4235 & 75.3045 & 24.5102 & 15.6660 & 8.6778 & 4.9508 \\
+ & Path Guiding Photons & 294.6426 & 86.8998 & 28.0278 & 17.1652 & 9.3220 & 5.2941 \\
+ & Path Tracing (Baseline) & 300.0677 & 88.3274 & 27.1607 & 17.3225 & 9.3983 & 5.2116 \\
+\cline{1-8}
+\multirow[t]{3}{*}{kitchen} & Path Guiding PSS (Ours) & 1115.0550 & 322.6243 & 92.8903 & 33.3924 & 17.9617 & 9.6380 \\
+ & Path Guiding Photons & 1321.0497 & 427.9097 & 119.0236 & 36.3462 & 20.6860 & 10.9098 \\
+ & Path Tracing (Baseline) & 1378.3817 & 384.5513 & 101.4734 & 37.1266 & 19.6100 & 10.0734 \\
+\cline{1-8}
+\multirow[t]{3}{*}{staircase} & Path Guiding PSS (Ours) & 661.8317 & 226.3808 & 69.3210 & 25.7261 & 15.0460 & 8.3259 \\
+ & Path Guiding Photons & 817.0091 & 348.9206 & 122.1427 & 28.5834 & 18.6794 & 11.0518 \\
+ & Path Tracing (Baseline) & 765.9683 & 268.7932 & 80.8730 & 27.6761 & 16.3949 & 8.9929 \\
+\cline{1-8}
+\bottomrule
+\end{tabular}
+}
+                         \caption{Absolute error metrics (MSE and RMSE) across evaluated scenes.}
+                         \label{tab:abs_error}
+                         \end{table}
