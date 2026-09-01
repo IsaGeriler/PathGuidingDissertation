@@ -34,7 +34,7 @@ SCENE_NAMES = [
 SCENES = [os.path.join(BASE_DIR, "Scenes", name) for name in SCENE_NAMES]
 
 # Methods to compare
-METHODS = ["path_trace", "photon_map", "path_guide_pss", "path_guide_photon"]
+METHODS = ["path_trace", "path_guide_pss", "path_guide_photon"]
 
 # Sample counts for convergence testing (Equal-Sample test)
 SPP_LIST = [32, 128, 512]

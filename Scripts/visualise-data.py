@@ -110,7 +110,8 @@ def generate_latex_table(csv_filepaths, output_dir):
         )
         
         # Wrap it in a table environment and resize it to fit the text width
-        full_latex = f"""\\begin{{table}}[htbp]
+        # Replace H with htbp if \usepackage{float} is not included!
+        full_latex = f"""\\begin{{table}}[H]
                          \\centering
                          \\resizebox{{\\textwidth}}{{!}}{{{raw_latex}}}
                          \\caption{{{caption}}}
