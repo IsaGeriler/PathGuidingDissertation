@@ -1538,9 +1538,6 @@ public:
 				return forwardPdf(wi, shadingData.bsdf->PDF(shadingData, wi));
 			});
 
-			// Save the direct lighting (NEE) to the record
-			record.directLighting = computeDirect(shadingData, sampler, forwardPdf);
-
 			// Apply Russian Roulette
 			// Russian Roulette should kick in normally between at depth 3 to 5
 			float rrpRecord = 1.f;
